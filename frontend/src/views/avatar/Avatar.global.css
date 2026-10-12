@@ -1,3 +1,4 @@
+@charset "UTF-8";
 
 .main-content:has(.avatar-page) {
   overflow: hidden;

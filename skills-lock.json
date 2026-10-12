@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "skills": {
+    "huawei-cloud-publish-work-to-gallery": {
+      "source": "https://gitcode.com/Lingxi-HandsOn/gallery.git",
+      "sourceUrl": "https://gitcode.com/Lingxi-HandsOn/gallery.git",
+      "sourceType": "git",
+      "skillPath": "skills/huawei-cloud-publish-work-to-gallery/SKILL.md",
+      "computedHash": "c4f2f8fad378232ba759357aeb68921b357451c1ce11b5edd55aad51a648da59"
+    }
+  }
+}

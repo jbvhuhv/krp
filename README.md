@@ -18,7 +18,7 @@
 | 链接 | 地址 |
 |------|------|
 | 代码仓库 | https://gitcode.com/jbvhuhv/knowledge-reflection-platform |
-| 作品展览馆发布链接 | `https://gallery.developer.huaweicloud.com/gallery/____________________` ← **待填写：在华为云开发者作品展览馆发布后替换** |
+| 作品展览馆发布链接 | https://gallery.developer.huaweicloud.com/gallery/005d803743400000 |
 
 > 提交提示：初赛期间每支队伍可多次迭代优化，最终成绩取截止前**历史最高提交版本**；提交完成后可在平台查看提交状态与初步审核结果。因此建议每次迭代后都重新提交一次。
 
