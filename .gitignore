@@ -42,3 +42,7 @@ nul
 .vscode/
 *.swp
 .DS_Store
+
+# 本地 AI 技能/工具（由 npx skills add 安装，非作品内容）
+.agents/
+skills-lock.json
