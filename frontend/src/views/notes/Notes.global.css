@@ -1,0 +1,20 @@
+
+.el-drawer.notes-detail-drawer,
+.notes-detail-drawer .el-drawer {
+  background: rgba(12, 14, 22, 0.72) !important;
+  background-image: none !important;
+  backdrop-filter: blur(18px) saturate(150%);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
+  border-left: 1px solid rgba(255, 255, 255, 0.07);
+  box-shadow:
+    -16px 0 48px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+.notes-detail-drawer .el-drawer__header {
+  color: #e6e8eb;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  margin-bottom: 0;
+}
+.notes-detail-drawer .el-drawer__title { color: #e6e8eb; font-weight: 600; }
+.notes-detail-drawer .el-drawer__close-btn { color: #5a5f68; }
+.notes-detail-drawer .el-drawer__close-btn:hover { color: #06b6d4; }

@@ -1,0 +1,70 @@
+
+.main-content:has(.avatar-page) {
+  overflow: hidden;
+}
+
+.scope-select-popper.el-popper {
+  background: rgba(15, 23, 42, 0.92) !important;
+  border: 1px solid rgba(34, 211, 238, 0.2) !important;
+  border-radius: 12px !important;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5) !important;
+}
+
+.scope-select-popper .el-select-dropdown__wrap,
+.scope-select-popper .el-select-dropdown__list {
+  background: transparent !important;
+}
+
+.scope-select-popper .el-select-dropdown__item {
+  color: #cbd5e1;
+  font-size: 13px;
+  border-radius: 8px;
+  margin: 2px 6px;
+}
+
+.scope-select-popper .el-select-dropdown__item.is-hovering {
+  background: rgba(34, 211, 238, 0.12) !important;
+  color: #67e8f9;
+}
+
+.scope-select-popper .el-select-dropdown__item.is-selected {
+  color: #22d3ee;
+  font-weight: 600;
+}
+
+.scope-select-popper .el-select-dropdown__item.is-selected::after {
+  color: #22d3ee;
+}
+
+.scope-select-popper .el-popper__arrow::before {
+  background: rgba(15, 23, 42, 0.92) !important;
+  border-color: rgba(34, 211, 238, 0.2) !important;
+}
+
+/* 访客对话抽屉（teleport 到 body，需非 scoped） */
+.conversation-drawer.el-drawer {
+  background: rgba(13, 17, 23, 0.96);
+  border-left: 1px solid rgba(34, 211, 238, 0.15);
+}
+
+.conversation-drawer .el-drawer__header {
+  margin-bottom: 0;
+  padding: 20px 24px;
+  border-bottom: 1px solid rgba(48, 54, 61, 0.4);
+  color: #e6edf3;
+  font-weight: 600;
+}
+
+.conversation-drawer .el-drawer__body {
+  padding: 20px 24px;
+}
+
+.conversation-drawer .el-drawer__close-btn {
+  color: #8b949e;
+}
+
+.conversation-drawer .el-drawer__close-btn:hover {
+  color: #22d3ee;
+}

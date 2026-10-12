@@ -1,0 +1,31 @@
+# 版本控制
+.git/
+.gitignore
+
+# 第三方运行时依赖（体量大，镜像内不需要）
+deps/
+
+# 依赖与缓存
+node_modules/
+**/node_modules/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+
+# 运行产物与日志
+logs/
+*.log
+*.db
+
+# 上传目录
+backend/uploads/
+uploads/
+
+# 工具/编辑器产物
+.arts/
+.codeartsdoer/
+.merkle-snapshot.json
+structure.txt
+
+# 文档不进入镜像
+docs/

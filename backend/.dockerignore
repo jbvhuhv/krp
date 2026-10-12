@@ -1,0 +1,31 @@
+# 版本控制/编辑器
+.git/
+.gitignore
+.arts/
+.codeartsdoer/
+.merkle-snapshot.json
+
+# 环境变量与本地配置（切勿打进镜像）
+.env
+.env.*
+!.env.example
+
+# 本地数据库与运行产物
+*.db
+*.sqlite
+*.sqlite3
+*.log
+uploads/
+backend_run.log
+
+# Python 缓存
+__pycache__/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml

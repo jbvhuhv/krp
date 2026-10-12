@@ -1,0 +1,30 @@
+
+.book-del-messagebox {
+  background: linear-gradient(160deg, #1c1420 0%, #0e0a14 100%) !important;
+  border: 1px solid rgba(248, 113, 113, 0.28) !important;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.62) !important;
+}
+
+.book-del-messagebox .el-message-box__title {
+  color: #fca5a5 !important;
+}
+
+.book-del-messagebox .el-message-box__content {
+  color: #cbd5e1 !important;
+}
+
+.book-del-messagebox .el-message-box__headerbtn .el-message-box__close {
+  color: #94a3b8 !important;
+}
+
+.book-del-confirm {
+  background: #ef4444 !important;
+  border-color: #ef4444 !important;
+  color: #fff !important;
+}
+
+.book-del-confirm:hover {
+  background: #f87171 !important;
+  border-color: #f87171 !important;
+}
+

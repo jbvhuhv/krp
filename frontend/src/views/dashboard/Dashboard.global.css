@@ -1,0 +1,36 @@
+
+/* 成就殿堂弹窗外壳（teleport 到 body，需非 scoped 样式覆盖 Element Plus 默认） */
+
+.achievement-dialog.el-overlay,
+.achievement-dialog .el-overlay {
+  background-color: rgba(3, 4, 6, 0.74);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.achievement-dialog.el-dialog {
+  position: relative;
+  max-width: 94vw;
+  background:
+    radial-gradient(120% 80% at 50% -12%, rgba(99, 102, 241, 0.12), transparent 62%),
+    linear-gradient(180deg, #0b0d12 0%, #08090d 100%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 20px;
+  box-shadow:
+    0 32px 80px -24px rgba(0, 0, 0, 0.82),
+    0 0 60px -34px rgba(99, 102, 241, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+}
+
+.achievement-dialog.el-dialog .el-dialog__header,
+.achievement-dialog .el-dialog .el-dialog__header {
+  padding: 22px 26px 0;
+  margin: 0;
+}
+
+.achievement-dialog.el-dialog .el-dialog__body,
+.achievement-dialog .el-dialog .el-dialog__body {
+  padding: 18px 26px 28px;
+}

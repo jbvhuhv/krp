@@ -1,0 +1,14 @@
+target-version = "py312"
+line-length = 100
+exclude = ["__pycache__", ".pytest_cache", "uploads"]
+
+[lint]
+select = ["E", "F", "W", "I", "B"]
+ignore = [
+    "E501",
+    # FastAPI 依赖注入惯例：Depends()/File() 等作为默认参数是官方推荐写法
+    "B008",
+]
+
+[lint.per-file-ignores]
+"tests/*" = ["B011"]

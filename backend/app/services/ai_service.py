@@ -1,0 +1,41 @@
+# 兼容旧引用：from app.services.ai_service import AIService
+# 本模块已按场景拆分至 app.services.ai 包，此处仅作转发兼容层。
+from app.services.ai import (
+    AVATAR_CHAT_PROMPT,
+    AVATAR_SMALLTALK_PROMPT,
+    EVALUATION_PROMPT,
+    EXTRACTION_PROMPT,
+    PET_CHAT_PROMPT,
+    PET_SYSTEM_PROMPTS,
+    QUESTION_GENERATION_PROMPT,
+    TONE_DESCRIPTIONS,
+    AIService,
+    EmbeddingClient,
+    EmbeddingProvider,
+    LLMClient,
+    LLMProvider,
+    create_ai_service,
+    create_embedding_provider,
+    create_llm_provider,
+    create_vision_provider,
+)
+
+__all__ = [
+    "AIService",
+    "LLMClient",
+    "EmbeddingClient",
+    "LLMProvider",
+    "EmbeddingProvider",
+    "create_ai_service",
+    "create_llm_provider",
+    "create_embedding_provider",
+    "create_vision_provider",
+    "EXTRACTION_PROMPT",
+    "QUESTION_GENERATION_PROMPT",
+    "EVALUATION_PROMPT",
+    "AVATAR_CHAT_PROMPT",
+    "AVATAR_SMALLTALK_PROMPT",
+    "TONE_DESCRIPTIONS",
+    "PET_SYSTEM_PROMPTS",
+    "PET_CHAT_PROMPT",
+]
