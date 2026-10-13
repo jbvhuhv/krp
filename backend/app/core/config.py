@@ -101,6 +101,9 @@ class Settings(BaseSettings):
     # 留空则自动探测 FRONTEND_DIST 常见位置（../frontend/dist、./frontend_dist）。
     FRONTEND_DIST: str = ""
 
+    # 知识图谱后端：auto = Neo4j 不可用时退回内置只读演示图谱；neo4j = 仅用 Neo4j；sqlite = 强制内置
+    GRAPH_BACKEND: str = "auto"
+
 
 DEFAULT_WELCOME_MESSAGE = "你好！我是你的专属知识分身，欢迎向我提问。"
 

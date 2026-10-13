@@ -33,7 +33,12 @@ services:
       # 免费档关闭定时任务，减少资源占用
       - key: SCHEDULER_ENABLED
         value: "false"
-      # 知识图谱：填入 Neo4j Aura 免费实例的连接信息（不填则图谱功能降级）
+      # 知识图谱后端：auto = Neo4j 可用时用 Neo4j，不可用时用内置只读演示图谱（默认，推荐）
+      #   内置图谱随镜像分发（719 知识点 / 607 关系），因此**无需任何外部图数据库**也能完整演示
+      - key: GRAPH_BACKEND
+        value: "auto"
+      # 【可选】连接外部 Neo4j 可启用图谱的完整读写能力（不填则用内置只读演示图谱）
+      #   注意：Neo4j Aura 不对中国大陆开放，如需外部图数据库请自建或用其他云厂商
       - key: NEO4J_URI
         sync: false
       - key: NEO4J_USER

@@ -39,6 +39,10 @@ async def lifespan(app: FastAPI):
     await init_vector_index(neo4j_driver)
     # 图谱为空时导入演示图谱（Render 首次部署 / 本地首次运行即可看到完整知识图谱）
     await bootstrap_neo4j(neo4j_driver)
+    # 探测 Neo4j 可用性：不可用时图谱退回「内置只读演示图谱」，避免整页空白
+    from app.services.graph import ping_neo4j
+
+    await ping_neo4j(neo4j_driver)
     # 抽取任务在进程内执行，服务重启会丢失排队任务；启动时自愈，避免笔记永远停在 pending
     await recover_stale_notes()
     if settings.SCHEDULER_ENABLED:
