@@ -180,7 +180,10 @@ class ExtractionService:
         self, note_id: str, user_id: str, file_path: str, fmt: str, attempt: int
     ) -> dict:
         logger.info("开始知识抽取 note_id=%s attempt=%d", note_id, attempt)
-        if fmt in settings.IMAGE_EXTENSIONS:
+        # 注意：上传侧传入的 fmt 不带点（"png"），而 IMAGE_EXTENSIONS 是带点的（".png"），
+        # 直接 `fmt in IMAGE_EXTENSIONS` 恒为 False，会把图片笔记误送进 parse_file 并报
+        # 「不支持的文件格式」。这里统一补点后再比较。
+        if f".{fmt.lstrip('.')}" in settings.IMAGE_EXTENSIONS:
             text = await self._load_image_text(note_id)
         else:
             text = parse_file(file_path, fmt)
