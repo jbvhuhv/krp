@@ -146,7 +146,39 @@ Render 默认开启 `autoDeploy`：推送到 `main` 分支会自动重新构建�
 
 ---
 
-## 六、常见问题
+## 七、附录：Render 控制台逐步指引
+
+> 按顺序照做即可；每一步若界面与描述不符，截图留档，通常是 Render 改版。
+
+| 步骤 | 操作 | 预期界面 |
+|---|---|---|
+| 1 | 打开 <https://dashboard.render.com/> → **Get Started** → 邮箱注册并验证 | 进入 Dashboard |
+| 2 | 右上角 **New +** → 选 **Web Service** | 进入 "Git Repository" 选择页 |
+| 3 | 页面**下半部分**找到 **Public Git repository** 输入框（不要在上面点 GitHub 授权） | 一个可直接填 URL 的输入框 |
+| 4 | 填入 `https://gitcode.com/jbvhuhv/knowledge-reflection-platform.git` → **Continue** | 进入服务配置页 |
+| 5 | **Name** 填 `krp-demo`；**Region** 选 `Singapore`；**Branch** 填 `main` | — |
+| 6 | **Language/Runtime** 应为 **Docker**（仓库根有 Dockerfile，通常自动识别） | 若显示别的语言，手动改成 Docker |
+| 7 | **Instance Type** 选 **Free** | 显示 $0/month |
+| 8 | 展开 **Environment Variables** → 逐条 **Add Environment Variable**（6 条，见第三节表格） | `SECRET_KEY` 点 **Generate** 按钮生成 |
+| 9 | 点 **Deploy Web Service** → 自动进入 **Logs** | 构建中 |
+| 10 | 等待 5–10 分钟，日志出现 `Your service is live` | 页面顶部出现访问地址 |
+| 11 | 复制地址（形如 `https://krp-demo-xxxx.onrender.com`）→ 浏览器打开 | 应看到登录页 |
+
+**常见卡点**
+
+| 情况 | 处理 |
+|---|---|
+| 找不到 "Public Git repository" | 它在授权列表**下方**；或把仓库镜像到 GitHub 后用 GitHub 授权 |
+| 注册时要求填信用卡 | Render 免费档通常不需要；若被要求，先停下，避免误开付费 |
+| 构建失败 | 把 Logs 最后 30 行发出来（多为依赖或内存问题） |
+| 打开很慢（30–60 秒） | 免费实例冷启动；配置第 2 步的保活即可 |
+| 图谱页为空 | 确认 `GRAPH_BACKEND=auto`；若自行填过 `NEO4J_*` 但地址不通，清空这三个变量 |
+
+**部署后的自检**：用演示账号 **13900000001 / 123456** 登录，应看到「我的笔记 32 篇」「知识图谱 31 本书」「知识广场 12 个图谱」。
+
+---
+
+## 八、常见问题
 
 | 现象 | 原因与处理 |
 |---|---|
