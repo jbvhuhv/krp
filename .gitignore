@@ -26,8 +26,10 @@ frontend/dist/
 node_modules/
 frontend/node_modules/
 
-# 第三方运行时依赖（本地下载，体量大，不提交）
-deps/
+# 第三方运行时依赖（仅根目录下本地下载的 Neo4j/JDK/Maven 等，体量大，不提交）
+# 注意必须锚定根目录：写成 `deps/` 会匹配任意层级的 deps 目录，
+# 从而把应用源码包 backend/app/api/deps/ 一起排除（曾导致克隆后无法启动）。
+/deps/
 
 # 运行时日志目录
 logs/
