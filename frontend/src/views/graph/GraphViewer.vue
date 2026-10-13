@@ -12,6 +12,9 @@ const userStore = useUserStore()
 
 const loading = ref(false)
 const loadError = ref(false)
+// 未登录（401）与真正的加载失败（网络/服务异常）分开提示，
+// 否则未登录用户会看到"书架加载失败，请检查网络连接"，误以为系统故障。
+const needLogin = ref(false)
 const books = ref([])
 const deleteMode = ref(false)
 const editingBookId = ref('')
@@ -102,6 +105,7 @@ const publishVisible = ref(false)
 async function loadGraph(force = false) {
   loading.value = true
   loadError.value = false
+  needLogin.value = false
   try {
     const booksData = await graphApi.getBooks()
     books.value = booksData?.items ?? []
@@ -130,8 +134,12 @@ async function loadGraph(force = false) {
 
     rawNodes.value = allNodes
     rawEdges.value = allEdges
-  } catch {
-    loadError.value = true
+  } catch (error) {
+    if (error?.response?.status === 401) {
+      needLogin.value = true
+    } else {
+      loadError.value = true
+    }
   } finally {
     loading.value = false
   }
@@ -412,10 +420,23 @@ onMounted(async () => {
             <line x1="15" y1="92" x2="95" y2="92" stroke="#475569" stroke-width="3" stroke-linecap="round" />
           </svg>
         </div>
-        <h2 class="shelf-empty-title">{{ loadError ? '书架加载失败' : '书架还是空的' }}</h2>
-        <p class="shelf-empty-sub">{{ loadError ? '请检查网络连接后重试' : '上传笔记，让 AI 自动为你生成知识脉络' }}</p>
-        <button class="shelf-empty-cta" @click="loadError ? loadGraph() : goToNotes()">
-          <span>{{ loadError ? '重新加载' : '去上传笔记' }}</span>
+        <h2 class="shelf-empty-title">
+          {{ needLogin ? '请先登录' : loadError ? '书架加载失败' : '书架还是空的' }}
+        </h2>
+        <p class="shelf-empty-sub">
+          {{
+            needLogin
+              ? '登录后即可查看你的知识书架'
+              : loadError
+                ? '请检查网络连接后重试'
+                : '上传笔记，让 AI 自动为你生成知识脉络'
+          }}
+        </p>
+        <button
+          class="shelf-empty-cta"
+          @click="needLogin ? userStore.openLoginModal() : loadError ? loadGraph() : goToNotes()"
+        >
+          <span>{{ needLogin ? '立即登录' : loadError ? '重新加载' : '去上传笔记' }}</span>
           <span class="cta-arrow">→</span>
         </button>
       </div>
