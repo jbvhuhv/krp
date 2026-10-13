@@ -1,5 +1,6 @@
 # 版本控制
 .git/
+.github/
 .gitignore
 
 # 第三方运行时依赖（体量大，镜像内不需要）
@@ -11,19 +12,32 @@ node_modules/
 __pycache__/
 **/__pycache__/
 *.py[cod]
+.pytest_cache/
+.ruff_cache/
 
 # 运行产物与日志
 logs/
 *.log
 *.db
+# 例外：随仓库分发的演示数据必须进镜像，否则首次启动无法自动灌入演示内容
+!backend/demo/krp-demo.db
+
+# 本地配置（镜像内一律用环境变量注入，绝不打包 .env）
+.env
+**/.env
 
 # 上传目录
 backend/uploads/
 uploads/
 
+# 前端构建产物（镜像内重新构建，保证与源码一致）
+frontend/dist/
+
 # 工具/编辑器产物
 .arts/
 .codeartsdoer/
+.agents/
+skills-lock.json
 .merkle-snapshot.json
 structure.txt
 

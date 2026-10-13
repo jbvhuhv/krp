@@ -93,6 +93,14 @@ class Settings(BaseSettings):
     # 生产环境必须保持 False；本地开发在 backend/.env 显式设 ALLOW_DEV_LOGIN=true。
     ALLOW_DEV_LOGIN: bool = False
 
+    # 演示数据自动引导：数据库/图谱为空时，自动灌入随仓库分发的演示数据（backend/demo/）。
+    # 让"克隆即可运行、部署即有内容"成立；置 false 可关闭。已存在数据时绝不做任何改动。
+    DEMO_BOOTSTRAP: bool = True
+
+    # 前端构建产物目录：存在 index.html 时由后端直接托管，实现单服务部署（如 Render 免费档）。
+    # 留空则自动探测 FRONTEND_DIST 常见位置（../frontend/dist、./frontend_dist）。
+    FRONTEND_DIST: str = ""
+
 
 DEFAULT_WELCOME_MESSAGE = "你好！我是你的专属知识分身，欢迎向我提问。"
 

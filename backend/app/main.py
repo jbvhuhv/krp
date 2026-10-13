@@ -8,7 +8,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.v1.router import api_router
@@ -28,12 +28,17 @@ logger = get_logger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from app.core.database import neo4j_driver
+    from app.core.demo_bootstrap import bootstrap_neo4j, bootstrap_sqlite
     from app.core.schema_migrations import ensure_schema
     from app.services.graph import init_vector_index
     from app.services.note_recovery import recover_stale_notes
 
+    # 必须在建表之前：空库时灌入演示数据（已存在数据则不做任何改动）
+    bootstrap_sqlite()
     await ensure_schema()
     await init_vector_index(neo4j_driver)
+    # 图谱为空时导入演示图谱（Render 首次部署 / 本地首次运行即可看到完整知识图谱）
+    await bootstrap_neo4j(neo4j_driver)
     # 抽取任务在进程内执行，服务重启会丢失排队任务；启动时自愈，避免笔记永远停在 pending
     await recover_stale_notes()
     if settings.SCHEDULER_ENABLED:
@@ -84,6 +89,50 @@ for _public_sub in ("covers", "avatars"):
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+def _resolve_spa_dir() -> str | None:
+    """定位前端构建产物目录（存在 index.html 才算有效）。"""
+    candidates = []
+    if settings.FRONTEND_DIST:
+        candidates.append(settings.FRONTEND_DIST)
+    backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    candidates.extend(
+        [
+            os.path.join(backend_dir, "frontend_dist"),  # 容器内（Dockerfile 拷贝到此处）
+            os.path.abspath(os.path.join(backend_dir, "..", "frontend", "dist")),  # 仓库内
+        ]
+    )
+    for cand in candidates:
+        if cand and os.path.isfile(os.path.join(cand, "index.html")):
+            return cand
+    return None
+
+
+_SPA_DIR = _resolve_spa_dir()
+if _SPA_DIR:
+    _assets_dir = os.path.join(_SPA_DIR, "assets")
+    if os.path.isdir(_assets_dir):
+        # 带哈希的静态资源可长缓存
+        app.mount("/assets", StaticFiles(directory=_assets_dir), name="spa_assets")
+
+    _API_PREFIX = settings.API_V1_PREFIX.strip("/")
+    _RESERVED = {"docs", "redoc", "openapi.json", "health"}
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def spa_fallback(full_path: str):
+        """SPA 前端路由回退：非 API 路径统一返回 index.html。
+
+        由后端直接托管前端，可实现单服务部署（前后端同源，无需 CORS）。
+        """
+        if full_path in _RESERVED or full_path.startswith(_API_PREFIX) or full_path.startswith("uploads/"):
+            raise HTTPException(status_code=404, detail="Not Found")
+        candidate = os.path.join(_SPA_DIR, full_path)
+        if full_path and os.path.isfile(candidate):
+            return FileResponse(candidate)
+        return FileResponse(os.path.join(_SPA_DIR, "index.html"))
+
+    logger.info("已启用前端静态托管：%s", _SPA_DIR)
 
 
 def _trace_id_of(request: Request) -> str:

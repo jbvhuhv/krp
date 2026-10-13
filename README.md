@@ -224,6 +224,16 @@ demo1/
 
 ## 快速开始
 
+### 0. 演示数据（开箱即有内容）
+
+仓库内置一份**已脱敏**的演示数据 `backend/demo/`（32 篇笔记、12 个社区作品、
+719 个知识点 / 607 条关系）。**首次启动时若数据库或图谱为空，会自动灌入**，
+因此克隆后直接运行就能看到完整界面，不会是满屏"暂无数据"。
+
+- 演示账号：手机号 **13900000001**，验证码 **123456**（需 `DEBUG=true` + `ALLOW_DEV_LOGIN=true`）
+- 关闭自动灌数据：设置环境变量 `DEMO_BOOTSTRAP=false`
+- 图谱数据存于 Neo4j：未启动 Neo4j 时图谱能力自动降级（其余功能不受影响）
+
 ### 1. 环境要求
 
 - Python 3.12+
@@ -295,6 +305,25 @@ npm run dev
 访问 `http://localhost:5173`，Vite 代理 `/api` 到后端 `http://localhost:8000`。
 
 访客对话页地址：`http://localhost:5173/chat/{avatarId}`（无需登录）。
+
+## 部署（含零成本公网体验地址）
+
+仓库根目录提供 `Dockerfile`（**单服务镜像**：前端构建产物由后端直接托管，同源无跨域）与
+`render.yaml`（Render 一键部署蓝图），可部署到任意容器平台。
+
+**零成本方案（Render 免费档 + Neo4j Aura 免费版）** 完整步骤见
+[`docs/部署-免费云Render.md`](docs/部署-免费云Render.md)：无需备案、无需信用卡，
+首次启动自动灌入演示数据，配合 UptimeRobot 保活即可长期给他人体验。
+
+```bash
+# 本地也可以用容器跑一遍（模拟线上）
+docker build -t krp .
+docker run --rm -p 8000:8000 \
+  -e DEBUG=true -e ALLOW_DEV_LOGIN=true -e SECRET_KEY=change-me-demo-only \
+  -e POSTGRES_URL=sqlite+aiosqlite:///./krp.db -e DEMO_BOOTSTRAP=true \
+  krp
+# 打开 http://localhost:8000
+```
 
 ## API 接口概览
 
@@ -398,6 +427,7 @@ npm run dev
 
 ## 相关文档
 
+- [免费云部署指南](docs/部署-免费云Render.md) — Render 免费档 + Neo4j Aura 免费版，零成本公网体验地址
 - [作品说明与场景亮点](docs/00-作品说明与场景亮点.md) — 场景背景、功能架构、核心亮点、环境依赖与码道应用
 - [需求规格说明书](docs/01-需求规格说明书.md) — 21 个 User Story + 验收标准 + 交互原型 + 里程碑
 - [高层架构与系统设计](docs/02-高层架构与系统设计.md) — 架构图、模块划分、技术选型、数据流、RAG/调度算法与部署

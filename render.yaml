@@ -1,0 +1,57 @@
+# Render 一键部署蓝图（Blueprint）
+#
+# 用法：Render 控制台 → New → Blueprint → 选择本仓库 → 自动读取本文件并创建服务。
+# 免费档即可运行；数据库用容器内 SQLite（首次启动自动灌入演示数据），
+# 知识图谱建议接入 Neo4j Aura 免费实例（下面三个 NEO4J_* 变量留待你填写）。
+#
+# 详细步骤见 docs/部署-免费云Render.md
+
+services:
+  - type: web
+    name: krp-demo
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    # 就近选择区域以改善国内访问：singapore / frankfurt / oregon / ohio / virginia
+    region: singapore
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      # 演示必需：开启调试与万能验证码登录（体验账号见 docs）
+      - key: DEBUG
+        value: "true"
+      - key: ALLOW_DEV_LOGIN
+        value: "true"
+      # 数据库：容器内 SQLite；首次启动若为空会自动灌入演示数据
+      - key: POSTGRES_URL
+        value: sqlite+aiosqlite:///./krp.db
+      - key: DEMO_BOOTSTRAP
+        value: "true"
+      # 由 Render 自动生成强随机密钥（切勿使用默认值）
+      - key: SECRET_KEY
+        generateValue: true
+      # 免费档关闭定时任务，减少资源占用
+      - key: SCHEDULER_ENABLED
+        value: "false"
+      # 知识图谱：填入 Neo4j Aura 免费实例的连接信息（不填则图谱功能降级）
+      - key: NEO4J_URI
+        sync: false
+      - key: NEO4J_USER
+        sync: false
+      - key: NEO4J_PASSWORD
+        sync: false
+      # 可选：接入 LLM / OCR 后，"上传笔记自动抽取"才可用（详见文档的注意事项）
+      - key: LLM_PROVIDER
+        sync: false
+      - key: LLM_API_KEY
+        sync: false
+      - key: LLM_BASE_URL
+        sync: false
+      - key: LLM_MODEL
+        sync: false
+      - key: OCR_BASE_URL
+        sync: false
+      - key: OCR_API_KEY
+        sync: false
+      - key: OCR_MODEL
+        sync: false

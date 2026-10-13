@@ -16,6 +16,11 @@ const isDebug = import.meta.env.DEV
 // 生产构建 DEV=false 时不生效，且源码中不再硬编码真实手机号/验证码。
 const DEBUG_PHONE = isDebug ? import.meta.env.VITE_DEBUG_PHONE || '' : ''
 const DEBUG_CODE = isDebug ? import.meta.env.VITE_DEBUG_CODE || '' : ''
+// 演示环境（如 Render 免费档一键部署）会在构建期把 VITE_DEMO_MODE 置为 true，
+// 登录框额外显示一个可直接使用的演示账号，方便体验者立刻看到完整数据。
+const demoMode = import.meta.env.VITE_DEMO_MODE === 'true'
+const DEMO_PHONE = import.meta.env.VITE_DEMO_PHONE || '13900000001'
+const DEMO_CODE = import.meta.env.VITE_DEMO_CODE || '123456'
 
 const loginForm = reactive({
   phone: isDebug ? DEBUG_PHONE : '',
@@ -181,6 +186,13 @@ onBeforeUnmount(() => {
       <div class="tip-bar">
         <el-icon size="14"><InfoFilled /></el-icon>
         <span>未注册的手机号验证成功后将自动创建账号</span>
+      </div>
+
+      <div v-if="demoMode" class="tip-bar demo-tip">
+        <el-icon size="14"><InfoFilled /></el-icon>
+        <span>
+          演示环境：手机号 <b>{{ DEMO_PHONE }}</b> / 验证码 <b>{{ DEMO_CODE }}</b>，登录即可查看完整示例数据
+        </span>
       </div>
 
     </div>
@@ -368,6 +380,19 @@ onBeforeUnmount(() => {
   border: 1px solid rgba(255, 255, 255, 0.05);
   color: #6e7681;
   font-size: 12px;
+}
+
+/* 演示环境提示：仅当构建期 VITE_DEMO_MODE=true 时出现 */
+.demo-tip {
+  margin-top: 10px;
+  background: rgba(56, 189, 248, 0.08);
+  border-color: rgba(56, 189, 248, 0.25);
+  color: #7dd3fc;
+}
+
+.demo-tip b {
+  color: #e0f2fe;
+  font-weight: 600;
 }
 
 .tip-bar :deep(.el-icon) {
