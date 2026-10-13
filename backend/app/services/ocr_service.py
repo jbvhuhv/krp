@@ -8,6 +8,8 @@
 import base64
 import os
 
+import httpx
+
 from app.core.logger import get_logger
 from app.core.prompt_manager import prompt_manager
 from app.services.providers.base import LLM_ERROR_TYPES, VisionProvider
@@ -45,6 +47,23 @@ class OcrService:
         prompt = prompt_manager.get_ocr_prompt()
         try:
             text = await self.provider.describe_image(image_b64, mime, prompt)
+        except httpx.HTTPStatusError as exc:
+            # 按状态码给出可操作的提示：额度/鉴权类问题让用户重试是误导
+            status_code = exc.response.status_code
+            logger.warning("OCR 服务调用失败（HTTP %s）：%s", status_code, exc)
+            if status_code == 402:
+                raise OcrError(
+                    "图片识别服务额度不足，请联系管理员充值或更换 OCR 模型"
+                ) from exc
+            if status_code in (401, 403):
+                raise OcrError(
+                    "图片识别服务鉴权失败，请检查 backend/.env 的 OCR_API_KEY"
+                ) from exc
+            if status_code == 404:
+                raise OcrError(
+                    "图片识别模型不存在，请检查 backend/.env 的 OCR_MODEL 与 OCR_BASE_URL"
+                ) from exc
+            raise OcrError("图片识别服务暂时不可用，请稍后重试") from exc
         except LLM_ERROR_TYPES as exc:
             logger.warning("OCR 服务调用失败：%s", exc)
             raise OcrError("图片识别服务暂时不可用，请稍后重试") from exc

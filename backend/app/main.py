@@ -30,9 +30,12 @@ async def lifespan(app: FastAPI):
     from app.core.database import neo4j_driver
     from app.core.schema_migrations import ensure_schema
     from app.services.graph import init_vector_index
+    from app.services.note_recovery import recover_stale_notes
 
     await ensure_schema()
     await init_vector_index(neo4j_driver)
+    # 抽取任务在进程内执行，服务重启会丢失排队任务；启动时自愈，避免笔记永远停在 pending
+    await recover_stale_notes()
     if settings.SCHEDULER_ENABLED:
         from app.scheduler import setup_scheduler
 
