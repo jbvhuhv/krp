@@ -25,8 +25,10 @@ services:
       - .env.production
     environment:
       # 容器内固定值（覆盖 .env 里的本地开发配置）
-      DEBUG: "false"
-      ALLOW_DEV_LOGIN: "true" # 演示环境用万能验证码登录；正式使用请置 false
+      # 演示环境需要「万能验证码登录」（应用要求 DEBUG=true 与 ALLOW_DEV_LOGIN=true 同时开启），
+      # 否则评委无法在没有短信服务的环境里登录。正式对外请改 false 并接入真实短信。
+      DEBUG: "true"
+      ALLOW_DEV_LOGIN: "true"
       DEMO_BOOTSTRAP: "true"
       POSTGRES_URL: "sqlite+aiosqlite:////data/krp.db"
       GRAPH_BACKEND: "auto"
