@@ -29,6 +29,10 @@ export default defineConfig({
   server: {
     host: '0.0.0.0',
     port: 5173,
+    // 允许通过隧道域名（如 *.trycloudflare.com / *.loca.lt / DevBridge 环境域名）访问开发服务器。
+    // Vite 6 默认对非 localhost 的 Host 头返回 403，会导致"隧道通了但页面 403"。
+    // 仅影响本地开发服务器；生产构建产物部署不受此配置约束。
+    allowedHosts: true,
     proxy: {
       '/api': {
         target: 'http://localhost:8000',
