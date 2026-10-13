@@ -11,6 +11,9 @@ venv/
 *.env
 backend/.env
 !.env.example
+# 生产部署配置：含 SECRET_KEY / Neo4j 密码，绝不提交（模板 .env.production.example 可提交）
+.env.production
+.env.*.local
 
 # 本地数据库
 *.db

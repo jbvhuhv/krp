@@ -1,0 +1,79 @@
+# 生产部署编排（自建服务器 / 香港 VPS 等）
+#
+# 用途：一台 2C2G 的 Linux 服务器上跑完整栈 —— 应用 + Neo4j（可写图谱，支持上传抽取）。
+#
+# 使用：
+#   1) 复制 .env.production.example 为 .env.production 并填写（尤其是 SECRET_KEY 与 Neo4j 密码）
+#   2) docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+#   3) 首次启动会自动灌入演示数据（可 DEMO_BOOTSTRAP=false 关闭）
+#
+# 与 docker-compose.yml 的区别：那份是「本地开发基础设施」（Postgres+Redis+Neo4j），
+# 这份是「单机生产部署」（本应用容器 + Neo4j，关系库用 SQLite，无需 Postgres/Redis）。
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: krp-app:latest
+    container_name: krp-app
+    restart: unless-stopped
+    depends_on:
+      neo4j:
+        condition: service_healthy
+    env_file:
+      - .env.production
+    environment:
+      # 容器内固定值（覆盖 .env 里的本地开发配置）
+      DEBUG: "false"
+      ALLOW_DEV_LOGIN: "true" # 演示环境用万能验证码登录；正式使用请置 false
+      DEMO_BOOTSTRAP: "true"
+      POSTGRES_URL: "sqlite+aiosqlite:////data/krp.db"
+      GRAPH_BACKEND: "auto"
+      FRONTEND_DIST: "/app/frontend_dist"
+      UPLOAD_DIR: "/data/uploads"
+      NEO4J_URI: "bolt://neo4j:7687"
+      SCHEDULER_ENABLED: "true"
+    volumes:
+      - krp-data:/data # SQLite 与上传文件持久化
+    ports:
+      # 只绑定本机，由宿主机 Nginx/Caddy 反代并终止 TLS（不直接暴露 8000）
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5).status==200 else 1)\""]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  neo4j:
+    image: neo4j:5.26-community
+    container_name: krp-neo4j
+    restart: unless-stopped
+    environment:
+      # 密码由 .env.production 提供；用户名固定 neo4j
+      NEO4J_AUTH: "neo4j/${NEO4J_PASSWORD:?请在 .env.production 设置 NEO4J_PASSWORD}"
+      # 2C2G 机器的内存调优（Neo4j 是 Java 应用，必须限制，否则会 OOM）
+      NEO4J_server_memory_heap_initial__size: "512m"
+      NEO4J_server_memory_heap_max__size: "512m"
+      NEO4J_server_memory_pagecache_size: "256m"
+      # 允许应用的 Cypher 查询（默认即可，这里显式声明便于排查）
+      NEO4J_dbms_security_auth__minimum__password__length: "8"
+    volumes:
+      - krp-neo4j:/data
+      - krp-neo4j-logs:/logs
+    ports:
+      # 只绑本机：需要从外部看图谱时用 SSH 隧道，不直接暴露 7474/7687
+      - "127.0.0.1:7474:7474"
+      - "127.0.0.1:7687:7687"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 >/dev/null 2>&1 || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+volumes:
+  krp-data:
+  krp-neo4j:
+  krp-neo4j-logs:
