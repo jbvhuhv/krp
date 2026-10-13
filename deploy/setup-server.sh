@@ -43,13 +43,19 @@ apt-get install -y -qq curl git ca-certificates gnupg lsb-release ufw fail2ban j
 ok "基础工具就绪"
 
 # 2G 内存的机器补 2G swap，避免 Neo4j 峰值 OOM
+# 注意：mkswap 在部分 util-linux 版本不支持 -q，故不使用该参数；每步独立执行便于排错
 if [[ ! -f /swapfile ]]; then
   log "1b 创建 2G swap（防 OOM）"
-  fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile -q && swapon /swapfile
-  grep -q '/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+  fallocate -l 2G /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count=2048 status=none
+  chmod 600 /swapfile
+  mkswap /swapfile >/dev/null
+fi
+swapon /swapfile 2>/dev/null || true
+grep -q '^/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+if swapon --show | grep -q '/swapfile'; then
   ok "swap 已启用：$(free -h | awk '/Swap/{print $2}')"
 else
-  ok "swap 已存在，跳过"
+  warn "swap 未生效（不影响运行，但峰值内存风险略高）"
 fi
 
 # ---------------------------------------------------------------- 2. Docker
@@ -169,28 +175,14 @@ ok "防火墙只放行 22/80/443；fail2ban 已开启（自动封禁 SSH 爆破�
 
 # ---------------------------------------------------------------- 8. 每日备份
 log "8/9 配置每日自动备份（03:30，保留 7 天）"
-mkdir -p "$APP_DIR/deploy" /var/backups/krp
-cat >"$APP_DIR/deploy/backup.sh" <<'EOS'
-#!/usr/bin/env bash
-# 每日备份：SQLite 数据库 + 上传文件 + Neo4j 图谱 dump
-set -euo pipefail
-STAMP="$(date +%F)"
-DEST="/var/backups/krp"
-APP_DIR="/opt/krp"
-cd "$APP_DIR"
-mkdir -p "$DEST"
-docker run --rm -v krp-data:/data -v "$DEST":/backup alpine \
-  tar czf "/backup/krp-data-$STAMP.tar.gz" -C / data 2>/dev/null || true
-docker exec krp-neo4j neo4j-admin database dump neo4j --to-path=/tmp >/dev/null 2>&1 || true
-docker cp krp-neo4j:/tmp/neo4j.dump "$DEST/neo4j-$STAMP.dump" >/dev/null 2>&1 || true
-find "$DEST" -type f -mtime +7 -delete
-echo "[$(date '+%F %T')] 备份完成：$(ls -1 "$DEST" | wc -l) 个文件"
-EOS
+mkdir -p /var/backups/krp
+# 备份脚本随仓库分发（deploy/backup.sh），这里只安装权限与定时任务
 chmod +x "$APP_DIR/deploy/backup.sh"
 cat >/etc/cron.d/krp-backup <<EOF
 30 3 * * * root $APP_DIR/deploy/backup.sh >> /var/log/krp-backup.log 2>&1
 EOF
 ok "备份脚本：$APP_DIR/deploy/backup.sh（目录 /var/backups/krp，保留 7 天）"
+ok "首次备份建议手动跑一次验证：bash $APP_DIR/deploy/backup.sh"
 
 # ---------------------------------------------------------------- 9. 汇总
 log "9/9 部署完成"
