@@ -87,7 +87,9 @@ Render 免费实例**闲置 15 分钟会休眠**，下一次访问需要 30–60
 用免费的 UptimeRobot 每 5 分钟 ping 一次即可保持唤醒：
 
 1. 打开 <https://uptimerobot.com/> → 注册（免费）
-2. **Add New Monitor** → 类型 `HTTP(s)` → URL 填 `https://<服务名>.onrender.com/health`
+2. **Add New Monitor** → 类型 `HTTP(s)` → URL 填
+   `https://<服务名>.onrender.com/health?deep=1`
+   （`deep=1` 会顺带探测关系库与 Neo4j，**同时避免 Neo4j Aura 免费实例因闲置约 3 天被自动暂停**）
 3. 监控间隔选 **5 minutes** → 保存
 
 > 免费档每月有 750 实例小时，单个服务 24/7 运行约需 744 小时，刚好够用。
