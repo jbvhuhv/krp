@@ -8,11 +8,11 @@
   ```bash
   cd backend
   cp .env.example .env          # 填入 MAAS_API_KEY 等配置
-  D:\Python313\python.exe -m pip install -r requirements.txt
-  D:\Python313\python.exe -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+  python -m pip install -r requirements.txt
+  python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
   ```
 
-  > Windows 本地开发请使用 `D:\Python313\python.exe`；`python` 可能是 Microsoft Store 占位程序。
+  > Windows 下若 `python` 是 Microsoft Store 占位程序，请改用 `py` 启动器，或先 `set PYTHON_CMD=<python 绝对路径>`（`scripts\setup.bat` 会按 `PYTHON_CMD` → `py` → `python` 顺序探测）。
 
 - 前端：
 
@@ -26,7 +26,7 @@
 
 ## 2. 测试
 
-- 必须在 `backend/` 目录下运行：`D:\Python313\python.exe -m pytest -v`。
+- 必须在 `backend/` 目录下运行：`python -m pytest -v`。
 - 当前基线：**234 个用例（全通过 / 5 xfail）**，禁止引入新的失败。
 - 新增功能需补充对应测试。
 

@@ -95,8 +95,8 @@ async def health(deep: bool = False):
     """健康检查。
 
     默认只返回进程存活状态；`?deep=1` 时额外探测关系库与 Neo4j ——
-    供 UptimeRobot 等保活监控使用，避免免费版 Neo4j Aura 实例因闲置被暂停。
-    探测失败不返回 5xx：图谱是可选能力，服务本身仍可用。
+    供 UptimeRobot 等保活监控使用（免费容器平台会因闲置休眠）。
+    探测失败不返回 5xx：图谱是可选能力，Neo4j 不可用时自动降级为内置只读演示图谱。
     """
     if not deep:
         return {"status": "ok"}

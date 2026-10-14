@@ -74,9 +74,9 @@ if errorlevel 1 (
 popd
 
 REM ---------- Neo4j reminder ----------
-echo [4/4] Neo4j is required. Start it with one of:
-echo    local : deps\jdk21\jdk-21.0.5+11\bin\java -cp "deps\neo4j-build\target\lib\*" org.neo4j.server.CommunityEntryPoint --home-dir=deps\neo4j-build\target --config-dir=deps\neo4j-build\target\conf --console-mode
-echo    docker: docker compose up -d neo4j redis postgres
+echo [4/4] Neo4j is required. Start it with Docker:
+echo    docker : docker compose up -d neo4j        (先在仓库根目录建 .env 并写入 NEO4J_PASSWORD)
+echo    local  : 方式二需自备 JDK 21 与 Neo4j 构建产物（deps/ 未随仓库分发）
 
 echo.
 echo === setup finished ===

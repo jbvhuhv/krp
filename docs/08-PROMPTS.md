@@ -125,4 +125,4 @@
 
 1. 修改 `app/prompts/` 下对应模板，必要时提升该模块 `PROMPT_VERSION`。
 2. 业务层保持通过 `prompt_manager.get_*()` 获取，禁止内联拼接。
-3. 运行 `cd backend && D:\Python313\python.exe -m pytest`，确保全部用例通过。
+3. 运行 `cd backend && python -m pytest`，确保全部用例通过。

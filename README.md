@@ -279,11 +279,11 @@ docker-compose up -d
 ```bash
 cd backend
 cp .env.example .env          # 编辑配置，填入 MAAS_API_KEY 等
-D:\Python313\python.exe -m pip install -r requirements.txt
-D:\Python313\python.exe -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+python -m pip install -r requirements.txt
+python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-> Windows 本地开发请使用 `D:\Python313\python.exe`（`python` 可能是 Microsoft Store 占位程序）。
+> Windows 下若 `python` 是 Microsoft Store 占位程序，请改用 `py` 启动器，或先 `set PYTHON_CMD=<python 绝对路径>`。
 
 访问 `http://localhost:8000/docs` 查看 OpenAPI 交互文档。
 
@@ -291,7 +291,7 @@ D:\Python313\python.exe -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8
 
 ```bash
 cd backend
-D:\Python313\python.exe -m pytest -v
+python -m pytest -v
 ```
 
 或在项目根目录运行一键 CI（后端测试 + 前端构建）：
@@ -317,9 +317,14 @@ npm run dev
 仓库根目录提供 `Dockerfile`（**单服务镜像**：前端构建产物由后端直接托管，同源无跨域）与
 `render.yaml`（Render 一键部署蓝图），可部署到任意容器平台。
 
-**零成本方案（Render 免费档 + Neo4j Aura 免费版）** 完整步骤见
+**零成本方案（Render 免费档，零外部数据库依赖）** 完整步骤见
 [`docs/部署-免费云Render.md`](docs/部署-免费云Render.md)：无需备案、无需信用卡，
-首次启动自动灌入演示数据，配合 UptimeRobot 保活即可长期给他人体验。
+项目内置只读演示图谱（Neo4j Aura 不对中国大陆开放），首次启动自动灌入演示数据，
+配合 UptimeRobot 保活即可长期给他人体验。
+
+**自建服务器方案（当前线上环境）**：用 `docker-compose.prod.yml` 一条命令起全栈
+（应用容器 + Neo4j，图谱可写、支持上传笔记自动抽取），服务器初始化脚本见
+[`deploy/setup-server.sh`](deploy/setup-server.sh)（自动安装 Docker、2G swap、Caddy 反向代理与每日备份）。
 
 ```bash
 # 本地也可以用容器跑一遍（模拟线上）
@@ -433,7 +438,7 @@ docker run --rm -p 8000:8000 \
 
 ## 相关文档
 
-- [免费云部署指南](docs/部署-免费云Render.md) — Render 免费档 + Neo4j Aura 免费版，零成本公网体验地址
+- [免费云部署指南](docs/部署-免费云Render.md) — Render 免费档（零外部数据库依赖），零成本公网体验地址
 - [作品说明与场景亮点](docs/00-作品说明与场景亮点.md) — 场景背景、功能架构、核心亮点、环境依赖与码道应用
 - [需求规格说明书](docs/01-需求规格说明书.md) — 21 个 User Story + 验收标准 + 交互原型 + 里程碑
 - [高层架构与系统设计](docs/02-高层架构与系统设计.md) — 架构图、模块划分、技术选型、数据流、RAG/调度算法与部署

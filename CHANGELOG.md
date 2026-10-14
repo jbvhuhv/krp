@@ -7,6 +7,24 @@
 
 ## Unreleased
 
+### 2026-10-14 · 文档与脚本一致性修复
+
+- 测试基线更新为 **243 个用例（238 通过 / 5 xfail）**（文档中此前的 177 / 172 为历史值）
+- 演示账号统一为 `13900000001`（旧文档里的 `16723456175` 不在演示库中）
+- `docs/12-目录架构.md` 已并入 `docs/04-项目结构与目录架构.md`，文档编号现为 `00`–`09`
+- `README.md` 部署章节改为与 `docs/部署-免费云Render.md` 一致（Render 免费档、零外部数据库依赖），
+  并补充当前线上使用的自建服务器方案（`docker-compose.prod.yml` + `deploy/setup-server.sh`）
+- `scripts/run_backend.bat`、`scripts/ci.bat` 去掉作者机器专属绝对路径：按脚本位置定位项目、自动探测 Python，
+  并自动创建 `logs/`；`ci.bat` 增加 ruff 缺失时的明确提示（ruff 仅在 `requirements-dev.txt` 中）
+- `scripts/setup.bat` 的 Neo4j 提示改为推荐 Docker（`deps/` 未随仓库分发）
+- `backend/.env.example` 补齐 `DEMO_BOOTSTRAP`、`GRAPH_BACKEND`、`FRONTEND_DIST`、`CORS_ORIGINS`、
+  `ALLOWED_EXTENSIONS`、`IMAGE_EXTENSIONS`、`SMS_*`(4 项)、`TIMEZONE_OFFSET_HOURS`、`APP_VERSION`、
+  `AVATAR_KEYWORD_THRESHOLD`
+- `.env.production.example` 补齐 `GRAPH_BACKEND`、`FRONTEND_DIST`
+- `docker-compose.yml` 改为 `DEBUG=true` 且新增 `ALLOW_DEV_LOGIN=true`（与本地开发文档一致）；
+  两个数据库口令改为带默认值，`docker compose up -d neo4j` 可直接执行（此前因必填校验会报错）
+- 文档中的 `D:\Python313\python.exe` 统一改为 `python` / `py`（并说明 Store 占位程序的处理方式）
+
 ### 文档
 
 - 精简并合并重叠文档：`docs/` 文档数由 14 篇降至 10 篇（另 `README.md` 索引）

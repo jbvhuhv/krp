@@ -9,7 +9,7 @@
 **排查路径**：
 - 确认 Neo4j 进程在运行：浏览器访问 `http://localhost:7474`，并确认 Bolt 端口 `7687` 已监听。
 - 核对 `backend/.env`：`NEO4J_URI`（默认 `bolt://localhost:7687`）、`NEO4J_USER`、`NEO4J_PASSWORD`。
-- 启动命令见根 `README.md`「启动基础设施」（`deps/neo4j-build/` 下的 CommunityEntryPoint）。
+- 启动命令：`docker compose up -d neo4j`（仓库根目录需先建 `.env` 写入 `NEO4J_PASSWORD`）；`deps/neo4j-build/` 的本地方式未随仓库分发，无法在新克隆中使用。
 - 图谱不可用时后端会优雅降级（不抛 500），但知识点不会写入图中；恢复 Neo4j 后需对相关笔记重新抽取。
 
 ## 2. MaaS API 超时 / 鉴权失败
