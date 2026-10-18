@@ -15,6 +15,8 @@ LLM_ERROR_TYPES: tuple[type[Exception], ...] = (
 )
 
 DEFAULT_TIMEOUT = 60.0
+# 建连单独设短超时：上游不可达时快速失败，避免占满连接池并拖垮请求处理
+CONNECT_TIMEOUT = 10.0
 
 _shared_client: httpx.AsyncClient | None = None
 
@@ -26,7 +28,14 @@ def get_http_client() -> httpx.AsyncClient:
     """
     global _shared_client
     if _shared_client is None or _shared_client.is_closed:
-        _shared_client = httpx.AsyncClient(timeout=DEFAULT_TIMEOUT)
+        _shared_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(DEFAULT_TIMEOUT, connect=CONNECT_TIMEOUT),
+            limits=httpx.Limits(
+                max_connections=100,
+                max_keepalive_connections=20,
+                keepalive_expiry=60.0,
+            ),
+        )
     return _shared_client
 
 

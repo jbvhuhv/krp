@@ -2,7 +2,7 @@ import asyncio
 import logging
 import os
 import sys
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
@@ -25,6 +25,28 @@ setup_logging(level=logging.DEBUG if settings.DEBUG else logging.INFO)
 logger = get_logger(__name__)
 
 
+async def _recover_graph_backend(driver, interval: float = 60.0) -> None:
+    """降级后自愈：定期重探 Neo4j，成功即把图谱后端切回 Neo4j（无需重启进程）。
+
+    场景：宿主机重启时应用可能比 Neo4j 先就绪。启动探测带了重试，但若 Neo4j 启动
+    更慢（磁盘慢、数据量大），仍会降级为内置只读图谱 —— 此时由本协程兜底恢复，
+    避免「必须手工重启容器才能恢复」。
+    """
+    from app.services.graph import neo4j_available, set_neo4j_available
+
+    while True:
+        await asyncio.sleep(interval)
+        if neo4j_available() is not False:
+            continue
+        try:
+            async with driver.session() as session:
+                await (await session.run("RETURN 1 AS ok")).single()
+        except Exception:  # noqa: BLE001 - 仍不可用就等下一轮，保持静默
+            continue
+        set_neo4j_available(True)
+        logger.warning("Neo4j 已恢复：图谱后端自动切回 Neo4j")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from app.core.database import neo4j_driver
@@ -43,13 +65,25 @@ async def lifespan(app: FastAPI):
     from app.services.graph import ping_neo4j
 
     await ping_neo4j(neo4j_driver)
+    # 数据规范化：早期版本把 last_reviewed 写成 ISO 字符串，会让「今日反思」500（幂等）
+    from app.core.graph_migrations import normalize_last_reviewed
+
+    await normalize_last_reviewed(neo4j_driver)
     # 抽取任务在进程内执行，服务重启会丢失排队任务；启动时自愈，避免笔记永远停在 pending
     await recover_stale_notes()
     if settings.SCHEDULER_ENABLED:
         from app.scheduler import setup_scheduler
 
         setup_scheduler()
+    # 降级自愈：后台定期重探 Neo4j，恢复后自动切回（覆盖"启动重试窗口内仍未就绪"的情况）
+    graph_recovery_task: asyncio.Task | None = None
+    if neo4j_driver is not None:
+        graph_recovery_task = asyncio.create_task(_recover_graph_backend(neo4j_driver))
     yield
+    if graph_recovery_task is not None:
+        graph_recovery_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await graph_recovery_task
     if settings.SCHEDULER_ENABLED:
         from app.scheduler import shutdown_scheduler
 
@@ -98,8 +132,11 @@ async def health(deep: bool = False):
     供 UptimeRobot 等保活监控使用（免费容器平台会因闲置休眠）。
     探测失败不返回 5xx：图谱是可选能力，Neo4j 不可用时自动降级为内置只读演示图谱。
     """
+    from app.services.graph import neo4j_available
+
+    backend = {True: "neo4j", False: "local"}.get(neo4j_available(), "unknown")
     if not deep:
-        return {"status": "ok"}
+        return {"status": "ok", "graph_backend": backend}
 
     checks = {"database": "unknown", "neo4j": "unknown"}
     try:
@@ -122,8 +159,23 @@ async def health(deep: bool = False):
     except Exception as exc:  # pragma: no cover - 依赖外部服务
         checks["neo4j"] = f"error: {type(exc).__name__}"
 
+    dirty = None
+    if checks["neo4j"] == "ok":
+        try:
+            from app.core.database import neo4j_driver
+            from app.core.graph_migrations import count_dirty_last_reviewed
+
+            dirty = await count_dirty_last_reviewed(neo4j_driver)
+        except Exception:  # pragma: no cover - 统计失败不影响健康判定
+            dirty = None
+
     status = "ok" if all(v == "ok" for v in checks.values()) else "degraded"
-    return {"status": status, **checks}
+    return {
+        "status": status,
+        **checks,
+        "graph_backend": backend,
+        "dirty_last_reviewed": dirty,
+    }
 
 
 def _resolve_spa_dir() -> str | None:

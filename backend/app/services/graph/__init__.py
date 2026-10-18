@@ -1,3 +1,5 @@
+import asyncio
+
 from neo4j import AsyncDriver
 
 from app.core.config import settings
@@ -31,8 +33,17 @@ def neo4j_available() -> bool | None:
     return _neo4j_available
 
 
-async def ping_neo4j(driver: AsyncDriver | None) -> bool:
-    """探测 Neo4j 是否可用（启动时调用一次，结果缓存供依赖注入判断）。
+async def ping_neo4j(
+    driver: AsyncDriver | None,
+    attempts: int = 6,
+    delay: float = 5.0,
+) -> bool:
+    """探测 Neo4j 是否可用（启动时调用，带重试，结果缓存供依赖注入判断）。
+
+    为什么需要重试：宿主机重启时 Docker 会同时拉起所有容器，``depends_on`` 只在
+    ``docker compose up`` 时生效，因此应用常常比 Neo4j 先就绪。早期实现只探测一次，
+    命中这个时间差就会永久降级为「内置只读图谱」，表现为图谱写操作全部 403、
+    笔记抽取必然失败，且进程运行期间再不会重连。
 
     不可用时不抛异常：应用会退回「内置只读演示图谱」（见 local_service.py），
     使没有 Neo4j 的环境（免费云部署、评委本地仅跑 SQLite）里知识图谱页依然有内容。
@@ -40,17 +51,36 @@ async def ping_neo4j(driver: AsyncDriver | None) -> bool:
     if driver is None:
         set_neo4j_available(False)
         return False
-    try:
-        async with driver.session() as session:
-            await (await session.run("RETURN 1 AS ok")).single()
-        set_neo4j_available(True)
-        return True
-    except Exception:
-        logger.warning(
-            "Neo4j 不可用：知识图谱将使用内置只读演示数据（配置 NEO4J_URI 可启用完整功能）"
-        )
-        set_neo4j_available(False)
-        return False
+
+    last_exc: Exception | None = None
+    for attempt in range(1, max(1, attempts) + 1):
+        try:
+            async with driver.session() as session:
+                await (await session.run("RETURN 1 AS ok")).single()
+            set_neo4j_available(True)
+            if attempt > 1:
+                logger.info("Neo4j 连接成功（第 %d 次探测）", attempt)
+            return True
+        except Exception as exc:  # noqa: BLE001 - 探测失败要降级，不能阻断启动
+            last_exc = exc
+            if attempt < attempts:
+                logger.warning(
+                    "Neo4j 探测失败（%d/%d），%.0f 秒后重试：%s",
+                    attempt,
+                    attempts,
+                    delay,
+                    type(exc).__name__,
+                )
+                await asyncio.sleep(delay)
+
+    logger.warning(
+        "Neo4j 不可用（已重试 %d 次）：知识图谱将使用内置只读演示数据"
+        "（配置 NEO4J_URI 可启用完整功能）",
+        attempts,
+        exc_info=last_exc,
+    )
+    set_neo4j_available(False)
+    return False
 
 
 async def init_vector_index(

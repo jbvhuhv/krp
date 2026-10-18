@@ -1,0 +1,13 @@
+[Unit]
+Description=每天 03:30 触发 KRP 备份（含随机延迟，避免与其他任务同刻争抢 IO）
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+# 最多随机延后 5 分钟，防止多机/多任务同时打满磁盘
+RandomizedDelaySec=300
+# 机器关机错过执行时，开机补跑一次
+Persistent=true
+Unit=krp-backup.service
+
+[Install]
+WantedBy=timers.target

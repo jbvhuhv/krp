@@ -366,7 +366,12 @@ class CrudMixin:
                 MATCH (n:{NODE_LABEL} {{user_id: $user_id, node_type: $node_type}})
                 WHERE n.mastery < $mastery_threshold
                    OR n.last_reviewed IS NULL
-                   OR duration.between(n.last_reviewed, datetime()).days >= $days_threshold
+                   OR duration.between(
+                        CASE WHEN valueType(n.last_reviewed) STARTS WITH 'STRING'
+                             THEN datetime(n.last_reviewed)
+                           ELSE n.last_reviewed END,
+                        datetime()
+                      ).days >= $days_threshold
                 RETURN n
                 ORDER BY n.mastery ASC, n.last_reviewed ASC
                 LIMIT $limit

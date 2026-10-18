@@ -24,11 +24,13 @@ services:
     env_file:
       - .env.production
     environment:
-      # 容器内固定值（覆盖 .env 里的本地开发配置）
-      # 演示环境需要「万能验证码登录」（应用要求 DEBUG=true 与 ALLOW_DEV_LOGIN=true 同时开启），
-      # 否则评委无法在没有短信服务的环境里登录。正式对外请改 false 并接入真实短信。
+      # ⚠️ 当前按用户要求保留「演示态」：DEBUG=true + 万能验证码登录。
+      # 这样在短信服务尚未接通时，演示账号仍可登录。
+      # 正式对外前必须改回 DEBUG=false / ALLOW_DEV_LOGIN=false / SMS_DEV_MASTER_CODE=""。
       DEBUG: "true"
       ALLOW_DEV_LOGIN: "true"
+      # 万能够码必须显式配置才生效（代码里已无默认值），此处显式给出以维持演示行为
+      SMS_DEV_MASTER_CODE: "123456"
       DEMO_BOOTSTRAP: "true"
       POSTGRES_URL: "sqlite+aiosqlite:////data/krp.db"
       GRAPH_BACKEND: "auto"
@@ -36,6 +38,13 @@ services:
       UPLOAD_DIR: "/data/uploads"
       NEO4J_URI: "bolt://neo4j:7687"
       SCHEDULER_ENABLED: "true"
+    # 最小权限：以镜像内的非 root 用户运行，丢弃全部 Linux capabilities，
+    # 并禁止 setuid 提权。首次切换需要先把 /data 卷的所有者改为该 UID（见 README 预检命令）。
+    user: "10001:10001"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     volumes:
       - krp-data:/data # SQLite 与上传文件持久化
     ports:

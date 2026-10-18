@@ -4,6 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_ai_service, get_current_user_id, get_db, get_graph_service
+from app.core.logger import get_logger
 from app.core.prompt_manager import prompt_manager
 from app.models.note import Note
 from app.schemas.graph import (
@@ -27,6 +28,7 @@ from app.services.ai_service import AIService
 from app.services.graph_service import GraphService
 
 router = APIRouter()
+logger = get_logger(__name__)
 
 
 def _empty_graph() -> GraphData:
@@ -380,7 +382,12 @@ async def generate_ai_summary(
         summary = await ai_service.llm.chat(prompt)
         summary = summary.strip().strip('"').strip('"').strip('"')
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"AI 生成失败: {e}") from e
+        # 不回显上游异常内容（可能含上游地址、配额信息），只记日志并返回通用提示
+        logger.exception("[GRAPH] 节点摘要生成失败 node_id=%s", node_id)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="AI 生成失败，请稍后重试",
+        ) from e
 
     return {"summary": summary}
 

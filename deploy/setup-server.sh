@@ -98,7 +98,10 @@ if [[ ! -f "$ENV_FILE" ]]; then
 SECRET_KEY=$SECRET_KEY
 NEO4J_PASSWORD=$NEO4J_PASSWORD
 POSTGRES_URL=sqlite+aiosqlite:////data/krp.db
-ALLOW_DEV_LOGIN=true
+# 生产默认关闭调试与万能验证码；需要演示时请临时改并用完即关
+DEBUG=false
+ALLOW_DEV_LOGIN=false
+SMS_DEV_MASTER_CODE=
 DEMO_BOOTSTRAP=true
 LLM_PROVIDER=maas
 LLM_API_KEY=$LLM_API_KEY
@@ -145,6 +148,10 @@ if [[ -n "$DOMAIN" ]]; then
   cat >/etc/caddy/Caddyfile <<EOF
 $DOMAIN {
     encode gzip zstd
+    # 限制请求体大小，避免超大上传把容器内存打满（应用侧上限 10MB）
+    request_body {
+        max_size 12MB
+    }
     reverse_proxy 127.0.0.1:8000
 }
 EOF
@@ -153,6 +160,10 @@ else
   cat >/etc/caddy/Caddyfile <<'EOF'
 :80 {
     encode gzip zstd
+    # 限制请求体大小，避免超大上传把容器内存打满（应用侧上限 10MB）
+    request_body {
+        max_size 12MB
+    }
     reverse_proxy 127.0.0.1:8000
 }
 EOF
@@ -198,7 +209,7 @@ cat <<EOF
   部署完成 🎉
 
   访问地址 : $ACCESS
-  演示账号 : 手机号 13900000001   验证码 123456
+  （不在终端打印任何账号/验证码，避免凭据留在 shell 历史与日志里）
 
   常用命令（在 $APP_DIR 下）：
 
@@ -210,7 +221,7 @@ cat <<EOF
     图谱控制台 ssh -L 7474:127.0.0.1:7474 root@$IP  然后浏览器打开 http://localhost:7474
 
   下一步：
-    1) 用演示账号登录，确认「我的笔记 32 篇 / 知识图谱 31 本书 / 知识广场 12 个图谱」
+    1) 配置真实短信服务后用自己手机号登录（演示用万能码默认已关闭）
     2) 上传一篇笔记，确认能自动抽取（需要 .env.production 里配了 LLM_API_KEY）
     3) 把这个地址填进展览馆作品的 envUrl（作者端无权限时请管理员代填）
 ============================================================

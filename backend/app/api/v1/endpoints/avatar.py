@@ -21,6 +21,7 @@ from app.api.deps import (
 )
 from app.core.config import DEFAULT_WELCOME_MESSAGE, settings
 from app.core.database import AsyncSessionLocal
+from app.core.upload_guard import read_upload_limited
 from app.schemas.avatar import (
     AvatarConfig,
     AvatarOut,
@@ -96,13 +97,10 @@ async def upload_avatar_image(
     user_id: str = Depends(get_current_user_id),
     avatar_service: AvatarService = Depends(get_avatar_service),
 ):
-    content = await file.read()
+    # 分块读取并在超限时中断，避免超大上传把内存打满
+    content = await read_upload_limited(file, _AVATAR_MAX_SIZE)
     if not content:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="文件为空")
-    if len(content) > _AVATAR_MAX_SIZE:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="头像图片不能超过 5MB"
-        )
 
     filename = file.filename or ""
     ext = os.path.splitext(filename)[1].lower()

@@ -88,7 +88,12 @@ class Settings(BaseSettings):
     SMS_CODE_TTL: int = 300
     SMS_RATE_LIMIT_INTERVAL: int = 60
     SMS_DAILY_LIMIT: int = 5
-    SMS_DEV_MASTER_CODE: str = "123456"
+    # 登录失败次数限制（同一手机号在窗口期内允许的最大失败次数）
+    LOGIN_MAX_FAILURES: int = 10
+    LOGIN_FAILURE_WINDOW_SECONDS: int = 600
+    # 开发万能验证码：必须由环境变量显式提供，不再内置默认值。
+    # 留空即视为禁用（即使 ALLOW_DEV_LOGIN=true 也无法用万能码登录）。
+    SMS_DEV_MASTER_CODE: str = ""
     # 是否允许使用开发万能验证码登录（须同时 DEBUG=true 才生效）。
     # 生产环境必须保持 False；本地开发在 backend/.env 显式设 ALLOW_DEV_LOGIN=true。
     ALLOW_DEV_LOGIN: bool = False
@@ -120,10 +125,18 @@ if settings.SECRET_KEY == "change-me-in-production":
         "当前使用不安全的默认 SECRET_KEY（仅限本地调试）；部署前务必配置强随机 SECRET_KEY"
     )
 
-if settings.DEBUG and not settings.ALLOW_DEV_LOGIN:
-    get_logger(__name__).info(
-        "DEBUG=true 但 ALLOW_DEV_LOGIN=false：万能验证码登录未启用；"
-        "本地如需免验证码登录请在 backend/.env 设 ALLOW_DEV_LOGIN=true"
+# 强制关闭「万能验证码」：仅当 DEBUG=true 且显式配置了非空 SMS_DEV_MASTER_CODE 时才允许。
+# 这样即使部署时误留 ALLOW_DEV_LOGIN=true，生产环境（DEBUG=false）也不会出现登录绕过。
+if settings.ALLOW_DEV_LOGIN and not (settings.DEBUG and settings.SMS_DEV_MASTER_CODE):
+    get_logger(__name__).critical(
+        "ALLOW_DEV_LOGIN 已被强制关闭：仅 DEBUG=true 且显式配置 SMS_DEV_MASTER_CODE 时生效"
+    )
+    settings.ALLOW_DEV_LOGIN = False
+
+if settings.DEBUG and settings.ALLOW_DEV_LOGIN:
+    get_logger(__name__).warning(
+        "开发登录已启用（DEBUG=true + ALLOW_DEV_LOGIN=true）："
+        "可用万能验证码登录任意手机号，仅限本地调试，生产环境必须关闭"
     )
 
 

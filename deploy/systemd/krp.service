@@ -1,0 +1,51 @@
+[Unit]
+Description=KRP 知识管理与反思平台（Docker Compose 栈）
+Documentation=file:/opt/krp/README.md
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+# 重启策略仍由容器自身 restart: unless-stopped 兜底，systemd 只负责开机拉起
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/krp
+
+# 环境文件必须是 600 且属主 root；只给 docker compose 做变量插值用（NEO4J_PASSWORD 等）
+# 注意：EnvironmentFile 的内容不会进入 unit 日志，但仍建议用 root:root 0600 保存
+EnvironmentFile=/opt/krp/.env.production
+
+ExecStart=/usr/bin/docker compose -f docker-compose.prod.yml --env-file /opt/krp/.env.production up -d --remove-orphans
+ExecStop=/usr/bin/docker compose -f docker-compose.prod.yml --env-file /opt/krp/.env.production down
+ExecReload=/usr/bin/docker compose -f docker-compose.prod.yml --env-file /opt/krp/.env.production up -d
+TimeoutStartSec=900
+TimeoutStopSec=180
+
+# ---------- 权限最小化 ----------
+# 说明：docker socket 等价于 root 权限，因此这里无法改用普通用户（除非上 rootless docker 或 socket proxy）。
+# 采用 root + 强沙箱，配合 NoNewPrivileges 与只读文件系统，收敛被利用后的影响面。
+User=root
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+# 仅允许这些路径可写（ProtectSystem=strict 下其余全部只读）
+ReadWritePaths=/opt/krp /var/lib/docker /run /var/log
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

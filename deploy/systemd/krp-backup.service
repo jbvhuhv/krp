@@ -1,0 +1,28 @@
+[Unit]
+Description=KRP 每日备份（SQLite/上传文件 + Neo4j 数据卷）
+Documentation=file:/opt/krp/deploy/backup.sh
+Requires=docker.service
+After=docker.service
+ConditionPathExists=/opt/krp/deploy/backup.sh
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/krp
+ExecStart=/bin/bash /opt/krp/deploy/backup.sh
+TimeoutStartSec=1800
+
+# 备份同样需要 docker 权限（读取卷、短暂停止 Neo4j）
+User=root
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectHome=yes
+ReadWritePaths=/opt/krp /var/backups/krp /run /var/lib/docker
+UMask=0077
+
+# 备份是低优先级任务，避免与线上请求争抢 IO/CPU
+Nice=10
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=multi-user.target

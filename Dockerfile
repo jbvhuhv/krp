@@ -13,11 +13,11 @@ FROM node:20-alpine AS frontend-build
 WORKDIR /web
 # 免费实例内存有限，限制 Node 堆大小，避免构建被 OOM 杀掉
 ENV NODE_OPTIONS=--max-old-space-size=1024
-# 演示构建开关：置 true 时登录框会显示一个可直接登录的演示账号，
-# 方便评委/体验者立刻看到完整示例数据。普通构建不传这三个参数即可。
-ARG VITE_DEMO_MODE=true
-ARG VITE_DEMO_PHONE=13900000001
-ARG VITE_DEMO_CODE=123456
+# 演示构建开关：默认关闭。开启后登录框会显示可直接登录的演示账号，
+# 等价于把一组可用凭据公开到前端产物里，仅限临时演示构建显式传参开启。
+ARG VITE_DEMO_MODE=false
+ARG VITE_DEMO_PHONE=
+ARG VITE_DEMO_CODE=
 ENV VITE_DEMO_MODE=$VITE_DEMO_MODE \
     VITE_DEMO_PHONE=$VITE_DEMO_PHONE \
     VITE_DEMO_CODE=$VITE_DEMO_CODE
@@ -38,6 +38,17 @@ RUN pip install -r requirements.txt
 COPY backend/ ./
 COPY --from=frontend-build /web/dist ./frontend_dist
 ENV FRONTEND_DIST=/app/frontend_dist
+
+# 最小权限：创建固定的非 root 用户（UID/GID 10001）并预建数据目录。
+# 说明：命名卷首次挂载时由 Docker 以 root 创建，因此升级到本版本前需要先把卷的所有者改为 10001。
+RUN groupadd --gid 10001 app \
+    && useradd --uid 10001 --gid app --no-create-home --shell /usr/sbin/nologin app \
+    && mkdir -p /data \
+    && chown -R app:app /data
+
+USER app
 EXPOSE 8000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=5 \
+    CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5).status==200 else 1)"
 # 平台（Render 等）会注入 PORT；本地未设置时退回 8000
 CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

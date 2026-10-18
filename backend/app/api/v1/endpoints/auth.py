@@ -1,5 +1,5 @@
-import random
 import re
+import secrets
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -43,7 +43,7 @@ async def send_code(payload: SendCodeRequest):
                 detail="今日发送次数已达上限",
             )
 
-        code = f"{random.randint(0, 999999):06d}"
+        code = f"{secrets.randbelow(1_000_000):06d}"
         code_key = f"sms:code:{phone}"
         await redis_client.setex(code_key, settings.SMS_CODE_TTL, code)
         await redis_client.setex(rate_key, settings.SMS_RATE_LIMIT_INTERVAL, "1")
@@ -58,10 +58,8 @@ async def send_code(payload: SendCodeRequest):
             detail="服务暂时不可用，请稍后重试",
         ) from None
 
-    if settings.DEBUG:
-        logger.info("[SMS] phone=%s code=%s", phone, code)
-    else:
-        logger.info("[SMS] phone=%s code=%s", phone, "******")
+    # 安全：验证码明文绝不写入日志（日志通常被采集/长期保留）。只记录脱敏号码。
+    logger.info("[SMS] 验证码已生成并下发 phone=%s****%s", phone[:3], phone[-4:])
     return {"message": "验证码已发送"}
 
 
@@ -76,19 +74,36 @@ async def login(payload: LoginRequest, db: AsyncSession = Depends(get_db)):
             detail="手机号格式不正确",
         )
 
+    # 登录失败次数限制：同一手机号在窗口期内失败过多则暂时拒绝，防止 6 位验证码被枚举
+    fail_key = f"login:fail:{phone}"
+    try:
+        fail_count = await redis_client.get(fail_key)
+        if fail_count and int(fail_count) >= settings.LOGIN_MAX_FAILURES:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="登录失败次数过多，请稍后再试",
+            )
+    except HTTPException:
+        raise
+    except Exception as exc:  # 缓存不可用时不阻断正常登录，仅降级记录
+        logger.warning("[AUTH] 失败计数不可用: %s", type(exc).__name__)
+
     is_valid = False
     dev_master_code = (
         settings.SMS_DEV_MASTER_CODE
         if settings.DEBUG and settings.ALLOW_DEV_LOGIN
         else ""
     )
-    if dev_master_code and code == dev_master_code:
+    if dev_master_code and secrets.compare_digest(code, dev_master_code):
         is_valid = True
+        logger.warning(
+            "[AUTH] 使用开发万能验证码登录 phone=%s****%s", phone[:3], phone[-4:]
+        )
     else:
         code_key = f"sms:code:{phone}"
         try:
             stored_code = await redis_client.get(code_key)
-            if stored_code and stored_code == code:
+            if stored_code and secrets.compare_digest(stored_code, code):
                 is_valid = True
                 await redis_client.delete(code_key)
         except Exception:
@@ -98,10 +113,21 @@ async def login(payload: LoginRequest, db: AsyncSession = Depends(get_db)):
             ) from None
 
     if not is_valid:
+        try:
+            await redis_client.incr(fail_key)
+            await redis_client.expire(fail_key, settings.LOGIN_FAILURE_WINDOW_SECONDS)
+        except Exception:
+            pass
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="验证码错误或已过期",
         )
+
+    # 登录成功：清除失败计数，避免正常用户被历史失败拖累
+    try:
+        await redis_client.delete(fail_key)
+    except Exception:
+        pass
 
 
     result = await db.execute(select(User).where(User.phone == phone))

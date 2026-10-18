@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user_id, get_db, get_graph_service, get_optional_user_id
 from app.core.config import settings
+from app.core.upload_guard import read_upload_limited
 from app.models.community import (
     CommunityComment,
     CommunityLike,
@@ -619,13 +620,10 @@ async def upload_cover(
     file: UploadFile = File(...),
     user_id: str = Depends(get_current_user_id),
 ):
-    content = await file.read()
+    # 分块读取并在超限时中断，避免超大上传把内存打满
+    content = await read_upload_limited(file, MAX_COVER_SIZE)
     if not content:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="文件为空")
-    if len(content) > MAX_COVER_SIZE:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="封面图不能超过 5MB"
-        )
 
     filename = file.filename or ""
     ext = os.path.splitext(filename)[1].lower()

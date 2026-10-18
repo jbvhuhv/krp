@@ -24,6 +24,7 @@ from app.api.deps import (
 )
 from app.core.config import settings
 from app.core.constants import NOTE_STATUS
+from app.core.upload_guard import read_upload_limited
 from app.models.note import Note
 from app.schemas.note import NoteList, NoteOut
 from app.services.extraction_service import ExtractionService
@@ -86,16 +87,12 @@ async def upload_note(
     extraction_service: ExtractionService = Depends(get_extraction_service),
     ocr_service: OcrService = Depends(get_ocr_service),
 ):
-    content_bytes = await file.read()
+    # 分块读取并在超限时立即中断，避免超大上传先把内存打满（原实现是整体 read 后再比长度）
+    content_bytes = await read_upload_limited(file, settings.MAX_FILE_SIZE)
     if not content_bytes:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="文件内容为空，请重新选择",
-        )
-    if len(content_bytes) > settings.MAX_FILE_SIZE:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="文件大小超限，最大支持 10MB",
         )
 
     filename = file.filename or "untitled"
