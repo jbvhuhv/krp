@@ -58,6 +58,12 @@ _USERS_COLUMNS = {
     "nickname": "VARCHAR(32)",
 }
 
+# 通知的关联对象（点进去看原文）；存量通知为 NULL，不回填
+_NOTIFICATIONS_COLUMNS = {
+    "target_type": "VARCHAR(16)",
+    "target_id": "VARCHAR(36)",
+}
+
 # 数字分身头像图（用户自行上传）
 _AVATAR_COLUMNS = {
     "avatar_url": "VARCHAR(255)",
@@ -70,6 +76,7 @@ _TABLE_COLUMNS = {
     "community_comments": _COMMUNITY_COMMENT_COLUMNS,
     "users": _USERS_COLUMNS,
     "avatars": _AVATAR_COLUMNS,
+    "notifications": _NOTIFICATIONS_COLUMNS,
 }
 
 

@@ -116,7 +116,13 @@ async def notify_post_author(
         return
     try:
         await NotificationService(db).create(
-            user_id=post.user_id, title=title, content=content, type=notif_type
+            user_id=post.user_id,
+            title=title,
+            content=content,
+            type=notif_type,
+            # 让前端能「点通知直接跳到对应帖子」
+            target_type="post",
+            target_id=post.id,
         )
     except Exception:  # noqa: BLE001
         pass
@@ -578,7 +584,7 @@ async def create_comment(
         user_id,
         "comment",
         "有人评论了你的知识图谱",
-        f"评论了你的帖子《{post.title}》：{content[:60]}",
+        f"评论了你的知识图谱《{post.title}》：{content[:60]}",
     )
 
     return CommentOut(
@@ -711,7 +717,7 @@ async def toggle_like(
         user_id,
         "like",
         "有人点赞了你的知识图谱",
-        f"赞了你的帖子《{post.title}》",
+        f"赞了你的知识图谱《{post.title}》",
     )
     return LikeResponse(liked=True, likes_count=post.likes_count)
 
@@ -851,7 +857,7 @@ async def fork_post(
             user_id,
             "fork",
             "你的知识图谱被克隆了",
-            f"克隆了你的帖子《{post.title}》",
+            f"克隆了你的知识图谱《{post.title}》",
         )
 
         return ForkResponse(

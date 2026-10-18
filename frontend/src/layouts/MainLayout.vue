@@ -109,6 +109,10 @@ async function saveNickname() {
 
 const notifications = ref([])
 const unreadCount = ref(0)
+const notifTotal = ref(0)
+const notifVisible = ref(false)
+const notifLoading = ref(false)
+const NOTIF_PAGE_SIZE = 20
 let notifTimer = null
 
 function formatNotifTime(value) {
@@ -123,18 +127,59 @@ function formatNotifTime(value) {
   return `${date.getMonth() + 1}月${date.getDate()}日`
 }
 
+/** 一条通知应该跳到哪；历史通知没有 target 字段，返回 null。 */
+function notificationLink(item) {
+  const type = item?.target_type
+  const id = item?.target_id
+  if (type === 'post' && id) return `/community/${id}`
+  if (type === 'book' && id) return `/knowledge/book/${id}`
+  if (type === 'reflection') return '/reflection'
+  return null
+}
+
 async function loadNotifications() {
   if (!userStore.isLoggedIn) {
     notifications.value = []
     unreadCount.value = 0
+    notifTotal.value = 0
     return
   }
   try {
-    const data = await notificationsApi.list({ limit: 8, offset: 0 })
+    const data = await notificationsApi.list({ limit: NOTIF_PAGE_SIZE, offset: 0 })
     notifications.value = data?.items || []
     unreadCount.value = data?.unread || 0
+    notifTotal.value = data?.total || 0
   } catch {
     // 通知为辅助信息，加载失败不打断主流程
+  }
+}
+
+async function loadMoreNotifications() {
+  if (notifLoading.value) return
+  if (notifications.value.length >= notifTotal.value) return
+  notifLoading.value = true
+  try {
+    const data = await notificationsApi.list({
+      limit: NOTIF_PAGE_SIZE,
+      offset: notifications.value.length,
+    })
+    const seen = new Set(notifications.value.map((n) => n.id))
+    const more = (data?.items || []).filter((n) => !seen.has(n.id))
+    notifications.value = [...notifications.value, ...more]
+    unreadCount.value = data?.unread ?? unreadCount.value
+    notifTotal.value = data?.total ?? notifTotal.value
+  } catch {
+    // 忽略：下一次滚动还会重试
+  } finally {
+    notifLoading.value = false
+  }
+}
+
+function handleNotifScroll(event) {
+  const el = event.target
+  if (!el) return
+  if (el.scrollTop + el.clientHeight >= el.scrollHeight - 24) {
+    loadMoreNotifications()
   }
 }
 
@@ -145,6 +190,27 @@ async function readNotification(notification) {
     notification.is_read = true
     unreadCount.value = Math.max(0, unreadCount.value - 1)
   } catch {
+  }
+}
+
+/** 一次性清空未读：解决「只显示最新 N 条、更早的未读点不到」的问题。 */
+async function markAllNotificationsRead() {
+  if (!unreadCount.value) return
+  try {
+    await notificationsApi.markAllRead()
+    notifications.value = notifications.value.map((n) => ({ ...n, is_read: true }))
+    unreadCount.value = 0
+  } catch {
+  }
+}
+
+/** 点击一条通知：先标已读（红点立刻变化），再跳到对应内容。 */
+async function openNotification(item) {
+  const link = notificationLink(item)
+  await readNotification(item)
+  if (link) {
+    notifVisible.value = false
+    router.push(link)
   }
 }
 
@@ -227,6 +293,7 @@ watch(
 
           <el-popover
             v-if="userStore.isLoggedIn"
+            v-model:visible="notifVisible"
             placement="bottom-end"
             :width="320"
             trigger="click"
@@ -245,19 +312,34 @@ watch(
               <div class="notif-panel-head">
                 <span class="notif-panel-title">通知</span>
                 <span v-if="unreadCount" class="notif-unread">{{ unreadCount }} 条未读</span>
+                <button
+                  v-if="unreadCount"
+                  type="button"
+                  class="notif-readall"
+                  @click="markAllNotificationsRead"
+                >
+                  全部已读
+                </button>
               </div>
               <div v-if="!notifications.length" class="notif-empty">暂无通知</div>
-              <ul v-else class="notif-list">
+              <ul v-else class="notif-list" @scroll="handleNotifScroll">
                 <li
                   v-for="item in notifications"
                   :key="item.id"
                   class="notif-item"
                   :class="{ unread: !item.is_read }"
-                  @click="readNotification(item)"
+                  @click="openNotification(item)"
                 >
                   <div class="notif-title">{{ item.title }}</div>
                   <div v-if="item.content" class="notif-content">{{ item.content }}</div>
                   <div class="notif-time">{{ formatNotifTime(item.created_at) }}</div>
+                </li>
+                <li v-if="notifLoading" class="notif-more">加载中…</li>
+                <li
+                  v-else-if="notifications.length >= notifTotal && notifTotal > NOTIF_PAGE_SIZE"
+                  class="notif-more"
+                >
+                  没有更多了
                 </li>
               </ul>
             </div>
@@ -869,6 +951,31 @@ watch(
 
 .notif-popover .notif-unread {
   color: #22d3ee;
+  font-size: 12px;
+}
+
+.notif-popover .notif-readall {
+  margin-left: auto;
+  padding: 2px 8px;
+  border: 1px solid rgba(34, 211, 238, 0.35);
+  border-radius: 6px;
+  background: transparent;
+  color: #22d3ee;
+  font-size: 12px;
+  line-height: 18px;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.notif-popover .notif-readall:hover {
+  background: rgba(34, 211, 238, 0.12);
+  border-color: rgba(34, 211, 238, 0.6);
+}
+
+.notif-popover .notif-more {
+  padding: 10px 16px;
+  text-align: center;
+  color: #6e7681;
   font-size: 12px;
 }
 

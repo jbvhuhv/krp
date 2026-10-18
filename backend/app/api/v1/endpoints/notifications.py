@@ -27,6 +27,19 @@ async def list_notifications(
     )
 
 
+@router.put("/read-all")
+async def mark_all_read(
+    user_id: str = Depends(get_current_user_id),
+    notification_service: NotificationService = Depends(get_notification_service),
+):
+    """把当前用户的全部未读通知一次性标记为已读。
+
+    解决「弹层只显示最新 N 条 → 更早的未读永远点不到 → 红点清不掉」的问题。
+    """
+    updated = await notification_service.mark_all_read(user_id)
+    return {"updated": updated}
+
+
 @router.put("/{notification_id}/read", response_model=NotificationOut)
 async def mark_read(
     notification_id: str,

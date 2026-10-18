@@ -1,4 +1,4 @@
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logger import get_logger
@@ -17,12 +17,16 @@ class NotificationService:
         title: str,
         content: str = "",
         type: str = "system",
+        target_type: str | None = None,
+        target_id: str | None = None,
     ) -> Notification:
         notification = Notification(
             user_id=user_id,
             title=title,
             content=content,
             type=type,
+            target_type=target_type,
+            target_id=target_id,
         )
         self.db.add(notification)
         await self.db.commit()
@@ -73,3 +77,20 @@ class NotificationService:
         await self.db.commit()
         await self.db.refresh(notification)
         return notification
+
+    async def mark_all_read(self, user_id: str) -> int:
+        """把该用户所有未读通知标记为已读，返回受影响条数。
+
+        之前只有单条标记，配合「只显示最新 N 条」会让更早的未读通知永远不可达，
+        红点也就永远清不掉。
+        """
+        result = await self.db.execute(
+            update(Notification)
+            .where(
+                Notification.user_id == user_id,
+                Notification.is_read.is_(False),
+            )
+            .values(is_read=True)
+        )
+        await self.db.commit()
+        return int(result.rowcount or 0)

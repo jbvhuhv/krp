@@ -52,6 +52,8 @@ async def run_daily_reflection_job() -> dict:
                     title="今日反思提醒",
                     content=f"已为你生成 {len(questions)} 个反思问题，快去回顾一下吧。",
                     type="reflection",
+                    # 前端据此跳到「反思中心」
+                    target_type="reflection",
                 )
                 notified += 1
             except Exception:
