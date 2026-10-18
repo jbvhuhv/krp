@@ -18,9 +18,11 @@ const DEBUG_PHONE = isDebug ? import.meta.env.VITE_DEBUG_PHONE || '' : ''
 const DEBUG_CODE = isDebug ? import.meta.env.VITE_DEBUG_CODE || '' : ''
 // 演示环境（如 Render 免费档一键部署）会在构建期把 VITE_DEMO_MODE 置为 true，
 // 登录框额外显示一个可直接使用的演示账号，方便体验者立刻看到完整数据。
+// 注意：这里不能给手机号/验证码写死兜底值——否则即使 VITE_DEMO_MODE=false，
+// 凭据仍会被打进公开的前端产物里（构建期字面量无法被摇树剔除）。
 const demoMode = import.meta.env.VITE_DEMO_MODE === 'true'
-const DEMO_PHONE = import.meta.env.VITE_DEMO_PHONE || '13900000001'
-const DEMO_CODE = import.meta.env.VITE_DEMO_CODE || '123456'
+const DEMO_PHONE = import.meta.env.VITE_DEMO_PHONE || ''
+const DEMO_CODE = import.meta.env.VITE_DEMO_CODE || ''
 
 const loginForm = reactive({
   phone: isDebug ? DEBUG_PHONE : '',
