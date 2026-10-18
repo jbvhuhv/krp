@@ -15,6 +15,13 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      # 演示态构建参数：把演示账号注入前端产物，登录框会显示可一键登录的提示条。
+      # 这是「演示期的显式选择」，不是源码默认值。切正式环境时删掉整个 args 段即可，
+      # 源码里不再有写死的手机号/验证码兜底。
+      args:
+        VITE_DEMO_MODE: "true"
+        VITE_DEMO_PHONE: "13900000001"
+        VITE_DEMO_CODE: "123456"
     image: krp-app:latest
     container_name: krp-app
     restart: unless-stopped
