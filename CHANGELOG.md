@@ -7,12 +7,129 @@
 
 ## Unreleased
 
+### 2026-11-04 · 三轮体检修复（部署阻断 + 限流真实来源 + 测试契约）
+
+**P0 · 部署阻断**
+
+- **`app/core/rate_limit.py` 等 5 个文件此前未纳入版本控制**。`auth.py` / `avatar.py` 都 `import`
+  这个模块，若按 Git 拉代码构建，容器启动即 `ModuleNotFoundError`、整站 502。
+  已 `git add`：`rate_limit.py`、两个新测试、`.github/workflows/ci.yml`、`.gitattributes`
+- 连带修复：CI 之前根本不在仓库里（`.github/` 未跟踪），「已有 CI」实际不生效
+
+**安全 · 限流与密钥**
+
+- **访客聊天限流的来源识别修正**：生产是 Caddy 反代到 `127.0.0.1:8000`，
+  `websocket.client.host` 恒为反代地址，按它计数等于「全站每分钟 20 条」，两个访客互相锁死。
+  改为优先取 `X-Forwarded-For` 的**最后一跳**（客户端可伪造前缀，反代追加的那段才可信），
+  退路为 `X-Real-IP` → 连接地址；容器启动加 `--proxy-headers`，访问日志也能看到真实 IP
+- **弱 `SECRET_KEY` 校验与 `DEBUG` 解耦**：原来只有 `DEBUG=false` 才拦，而演示环境
+  （含 `docker-compose.prod.yml`）为了保住万能码登录把 `DEBUG` 设成了 `true`，
+  于是 `.env.production` 里原样留着 `请替换为随机字符串` 也能启动，JWT 密钥可被猜中。
+  现在弱密钥一律拒绝启动，只认显式的 `ALLOW_WEAK_SECRET=true`（本地 `backend/.env` 已开，生产不设）
+- `/auth/send-code` 在无 Redis 时的 503 文案改为说明真实原因与出路
+  （演示环境没有缓存服务，验证码存不下来）
+
+**正确性**
+
+- `guide_idea_stream` 不再吞掉 LLM 异常：原先失败时只 `warning` 后静默结束，前端显示
+  「暂无建议，换个方向试试」——用户以为模型没想法，实际是调用失败且额度已消耗。改为上抛，由接口发 `error` 帧
+- `/brainstorm/suggest/stream` 显式拒绝 `mode=generate`（400），不再静默当成 `hint`
+- `_parse_extraction_response` 解析失败时返回与成功同构的字段集：原先少 `nodes`/`subject` 两个 key，
+  模型偶发返回非 JSON 就会在下游 `result["nodes"]` 抛 `KeyError`，把可降级场景变成 500
+
+**测试**
+
+- 清空全部 5 个 `xfail`（此前把真实回归标成「预期失败」，永远不会变红）：
+  fork 的 `nodes_count` 现为 3（2 知识点 + 书籍根）、`note.nodes_count` 同理、
+  抽取提示词断言对齐 `categories` 树状格式、宠物成长改用 `growth_from_nodes()` 的凹曲线
+- 新增 2 个用例：`mode=generate` 必须 400、`_client_ip` 取 XFF 最后一跳
+
+**清理**
+
+- 清理前端死代码：`AIAssistPanel` 的 `regenerate` 事件（从未 emit、父组件也不监听）、
+  `hintResult` prop / ref（对话式面板改用 `hintMessages` 后已无人读）
+- 根目录 `nul`（103B，Windows 保留名误产物）仍在：普通权限删除会被系统拒绝，
+  `.gitignore` 已覆盖、不会被提交，需要管理员权限或先释放占用它的进程才能清掉
+
+### 2026-11-04 · 二轮体检修复（流式崩溃 + 安全加固）
+
+**P0 · 功能阻断**
+
+- **修复 `/api/v1/brainstorm/suggest/stream` 提示分支必崩**：`_to_node()` 返回的是 pydantic 模型，
+  而 `_sse()` 直接 `json.dumps`，抛 `TypeError: Object of type BrainstormNode is not JSON serializable`。
+  异常发生在 `StreamingResponse` 已发出 200 之后，客户端只收到半截流，界面显示「暂无建议」，
+  模型算出的结果被静默丢弃（线上日志已累计 12 次）。改为 `default=` 兜底序列化 + 每个分支自兜异常并补 `done` 帧
+- 同时关闭反向代理缓冲（`X-Accel-Buffering: no` + `Cache-Control: no-cache`），保证增量帧即时下发
+- 新增 4 个流式用例（正常建议 / 增量文本 / 上游异常仍需 `done` 且不回传内部报错 / 节点不存在），
+  修复前这类问题 CI 完全拦不住
+
+**安全加固**
+
+- SSE 错误帧不再回传 `str(exc)`，内部异常只进日志，前端只看到泛化文案
+- 新增 `ENABLE_API_DOCS`（默认 `false`）：演示环境常常 `DEBUG=true`，此前 `/docs`、`/openapi.json`
+  会把完整接口面公开到公网；本地需要时在 `.env` 显式打开
+- 新增 `SecurityHeadersMiddleware`（纯 ASGI，避免影响 SSE 流式）：`X-Content-Type-Options`、
+  `X-Frame-Options`、`Referrer-Policy`、`Permissions-Policy`、`Cross-Origin-Opener-Policy`，
+  仅在 `X-Forwarded-Proto: https` 时追加 HSTS（明文下加 HSTS 会锁死本地访问）
+- 访客聊天（公开 WebSocket `/avatar/chat/{id}`）新增用量闸门：按「分身 + 来源 IP」每分钟 20 条、
+  单条 500 字上限，防止匿名刷爆模型额度
+- `SECRET_KEY` 校验加强：原先只拦完全等于 `change-me-in-production`，`change-me-demo-only`
+  这类变体全部静默通过；现在命中 `change-me/secret/demo/请替换` 或长度 < 16 位时生产直接拒绝启动，
+  长度 < 32 位给出告警（不阻断，避免误伤已有部署）
+- `rate_limit` 降级日志改为每分钟最多一条（生产无 Redis 时原先每条调用都刷 WARNING）
+
+**前端与文档**
+
+- `api/brainstorm.js`：改用统一实例的 `baseURL`（不再硬编码 `/api/v1`）、支持 `AbortSignal`、
+  401 时清凭据并弹登录框（原先流式请求绕过了 axios 拦截器，登录过期毫无提示）
+- 构思面板再次提问/离开页面时中止上一条 SSE 连接，避免后端白跑生成
+- 恢复被误删的 `docs/images/*`（10 张）与 `docs/demo/demo-video.mp4`——README 仍在引用，
+  之前首页图片与视频链接全挂
+- 重新构建 `frontend/dist`（此前停留在旧产物，`BookDetail.vue` 等改动未生效）
+- 新增 `.gitattributes` 统一换行，消除 Windows 上反复出现的 `LF will be replaced by CRLF` 提示
+- 测试基线：**254 passed / 1 skipped / 5 xfailed**，ruff 与 eslint 全绿
+
+### 2026-11-04 · 安全与工程化修复（P0 / P2 整改）
+
+**P0 · 高危**
+
+- **万能验证码收紧到白名单**（新增 `DEV_LOGIN_PHONE_ALLOWLIST`）：修复前只比对验证码、不校验手机号，
+  任何人拿公开的万能码 + 对方手机号即可登录对方账号。现在只有白名单内号码可用万能码登录，
+  名单外一律 401；白名单为空时该功能整体不生效（安全默认值）。`docker-compose.prod.yml` 已收紧为演示号
+- **SPA 回退路径穿越修复**：路由参数 `{full_path:path}` 可传入 `../`（uvicorn 还会把 `%2F` 解码成 `/`），
+  原实现 `os.path.join` + `isfile` 直接返回文件，`/..%2F..%2Fbackend%2F.env` 能读走 SECRET_KEY、
+  LLM/OCR Key 与数据库口令。改为 `realpath` + `commonpath` 校验，越界一律回退 `index.html`
+- 修正 `_resolve_spa_dir()` 目录层级多退一级的问题（本地直接跑后端时永远找不到 `frontend/dist`，
+  只有容器内碰巧可用）
+- 登录失败计数收敛到 `app/core/rate_limit.py`：Redis 不可用时自动降级为进程内计数，
+  不再出现「缓存一挂、限流整体失效」
+
+**P2 · 工程化**
+
+- 新增 CI（`.github/workflows/ci.yml`）：后端 ruff + pytest、前端 eslint + build
+- 清理 7 处静默吞异常（笔记文件解析、抽取书名回退、知识脉络/概念查询、社区通知、克隆节点回滚），
+  统一改为 `logger.warning(..., exc_info=True)`，排障不再靠猜
+- 依赖瘦身：`passlib[bcrypt]` → 直接依赖 `bcrypt`（代码本就直调 bcrypt，passlib 是多余一层）
+- `.gitignore` 补 `*.db-wal`、`*.db-shm`、`_openapi.json`、`_oa_check.json`，并清理仓库根目录残留文件
+- 生产编排把令牌有效期收紧到 1 天；README 明确「HTTP 直连时 token 明文，须配域名走 Caddy 自动 HTTPS」
+- 测试补齐：万能码白名单用例、Redis 不可用仍需限流用例、路径穿越 5 个用例；顺带修掉 2 个历史失败用例
+  （万能码用例依赖本地 `.env`、上传超限 400→413 未同步）。基线：245 passed / 5 xfailed，ruff 全绿
+
+### 2026-11-04 · 移除 Render 部署方案
+
+- 删除 `render.yaml` 与 `docs/部署-免费云Render.md`：线上环境已固定为自建服务器
+  （`docker-compose.prod.yml` + `deploy/setup-server.sh`），不再维护第二条免费的 PaaS 部署路径
+- `README.md` 部署章节只讲自建服务器方案，移除「免费云部署指南」入口
+- 清理 `Dockerfile`、`backend/app/core/config.py`、`backend/app/main.py`、
+  `frontend/src/components/LoginModal.vue` 中指向 Render 的注释，改为中性描述
+
 ### 2026-10-14 · 文档与脚本一致性修复
 
 - 测试基线更新为 **243 个用例（238 通过 / 5 xfail）**（文档中此前的 177 / 172 为历史值）
-- 演示账号统一为 `13900000001`（旧文档里的 `16723456175` 不在演示库中）
+- 演示账号统一为演示号（旧文档中出现的**历史账号**已不在演示库中，号码不再在文档中列举）
 - `docs/12-目录架构.md` 已并入 `docs/04-项目结构与目录架构.md`，文档编号现为 `00`–`09`
-- `README.md` 部署章节改为与 `docs/部署-免费云Render.md` 一致（Render 免费档、零外部数据库依赖），
+- `README.md` 部署章节改为与 `docs/部署-免费云Render.md` 一致（Render 免费档、零外部数据库依赖，
+  该方案已于 2026-11-04 移除），
   并补充当前线上使用的自建服务器方案（`docker-compose.prod.yml` + `deploy/setup-server.sh`）
 - `scripts/run_backend.bat`、`scripts/ci.bat` 去掉作者机器专属绝对路径：按脚本位置定位项目、自动探测 Python，
   并自动创建 `logs/`；`ci.bat` 增加 ruff 缺失时的明确提示（ruff 仅在 `requirements-dev.txt` 中）

@@ -1,4 +1,4 @@
-# 单服务镜像：一个容器同时提供后端 API 与前端页面（适合 Render 免费档等单服务托管）
+# 单服务镜像：一个容器同时提供后端 API 与前端页面（适合单机单服务部署）
 #
 # 构建：docker build -t krp .
 # 运行：docker run -p 8000:8000 -e DEBUG=true -e ALLOW_DEV_LOGIN=true -e SECRET_KEY=xxx krp
@@ -50,5 +50,8 @@ USER app
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=5 \
     CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5).status==200 else 1)"
-# 平台（Render 等）会注入 PORT；本地未设置时退回 8000
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+# 平台/编排可能注入 PORT；本地未设置时退回 8000
+# --proxy-headers：容器前面是宿主机 Caddy，不加这行访问日志与 request.client 全是 127.0.0.1，
+# 按 IP 做的限流会退化成「全站一个桶」。端口只在 127.0.0.1 上发布（见 compose），
+# 外部无法直连伪造 X-Forwarded-For，所以这里可以信任全部转发来源。
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --proxy-headers --forwarded-allow-ips=*"]

@@ -10,7 +10,8 @@ neo4j>=5.24.0,<7.0.0
 redis>=5.0.0,<9.0.0
 # 3.4.0 修复了 JWT 算法混淆与解析炸弹类问题
 python-jose[cryptography]>=3.4.0,<4.0.0
-passlib[bcrypt]>=1.7.4,<2.0.0
+# 直接用 bcrypt（security.py 未使用 passlib，去掉多余的一层封装与依赖）
+bcrypt>=4.0.0,<6.0.0
 # 0.0.18 修复了 multipart 解析 DoS 公告
 python-multipart>=0.0.18,<1.0.0
 email-validator>=2.2.0,<3.0.0

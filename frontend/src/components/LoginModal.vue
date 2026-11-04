@@ -16,7 +16,7 @@ const isDebug = import.meta.env.DEV
 // 生产构建 DEV=false 时不生效，且源码中不再硬编码真实手机号/验证码。
 const DEBUG_PHONE = isDebug ? import.meta.env.VITE_DEBUG_PHONE || '' : ''
 const DEBUG_CODE = isDebug ? import.meta.env.VITE_DEBUG_CODE || '' : ''
-// 演示环境（如 Render 免费档一键部署）会在构建期把 VITE_DEMO_MODE 置为 true，
+// 演示构建（VITE_DEMO_MODE=true）会在构建期把演示账号注入产物，
 // 登录框额外显示一个可直接使用的演示账号，方便体验者立刻看到完整数据。
 // 注意：这里不能给手机号/验证码写死兜底值——否则即使 VITE_DEMO_MODE=false，
 // 凭据仍会被打进公开的前端产物里（构建期字面量无法被摇树剔除）。

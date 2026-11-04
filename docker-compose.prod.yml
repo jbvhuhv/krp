@@ -31,18 +31,26 @@ services:
     env_file:
       - .env.production
     environment:
-      # ⚠️ 当前按用户要求保留「演示态」：DEBUG=true + 万能验证码登录。
-      # 这样在短信服务尚未接通时，演示账号仍可登录。
-      # 正式对外前必须改回 DEBUG=false / ALLOW_DEV_LOGIN=false / SMS_DEV_MASTER_CODE=""。
+      # 演示态：短信服务尚未接通，用万能验证码让演示账号可登录。
+      # 安全边界：万能码**只对下面白名单里的手机号生效**（见 app/api/v1/endpoints/auth.py），
+      # 其他手机号即使知道 123456 也无法登录，避免「任意手机号 = 任意账号」被接管。
+      # 正式对外前应整体改为 DEBUG=false / ALLOW_DEV_LOGIN=false / SMS_DEV_MASTER_CODE=""。
       DEBUG: "true"
       ALLOW_DEV_LOGIN: "true"
+      # 接口文档保持关闭：调试态下 /docs 会把完整接口面公开到公网，演示也不需要它
+      ENABLE_API_DOCS: "false"
       # 万能够码必须显式配置才生效（代码里已无默认值），此处显式给出以维持演示行为
       SMS_DEV_MASTER_CODE: "123456"
+      # 白名单外的手机号一律无法用万能码登录；新增演示号请在此追加（英文逗号分隔）
+      DEV_LOGIN_PHONE_ALLOWLIST: "13900000001"
       DEMO_BOOTSTRAP: "true"
       POSTGRES_URL: "sqlite+aiosqlite:////data/krp.db"
       GRAPH_BACKEND: "auto"
       FRONTEND_DIST: "/app/frontend_dist"
       UPLOAD_DIR: "/data/uploads"
+      # 访问令牌有效期：演示环境不需要「一次登录管一周」，缩短到 1 天使被截获的 token 尽快失效。
+      # 配合下方 Nginx/Caddy 终止 TLS，避免 token 明文过网。
+      ACCESS_TOKEN_EXPIRE_MINUTES: "1440"
       NEO4J_URI: "bolt://neo4j:7687"
       SCHEDULER_ENABLED: "true"
     # 最小权限：以镜像内的非 root 用户运行，丢弃全部 Linux capabilities，

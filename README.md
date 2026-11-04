@@ -83,7 +83,7 @@
 | 后端 | FastAPI + uvicorn | 异步高性能，自动 OpenAPI 文档 |
 | 图数据库 | Neo4j 5.x | 知识图谱存储与关系查询（不可用时优雅降级） |
 | 关系数据库 | SQLite（开发）/ PostgreSQL 16（生产） | 用户、笔记、反思记录、社区帖子等结构化数据 |
-| 缓存 | Redis 7 | 验证码限流等缓存（可选；未配置时 `/auth/send-code` 返回 503，`DEBUG=true` 时可用万能码 `123456` 于 `/auth/login` 旁路登录） |
+| 缓存 | Redis 7 | 验证码限流等缓存（可选；未配置时 `/auth/send-code` 返回 503，`DEBUG=true` + `ALLOW_DEV_LOGIN=true` 且手机号在 `DEV_LOGIN_PHONE_ALLOWLIST` 白名单内时，可用万能码于 `/auth/login` 旁路登录；登录失败计数在 Redis 不可用时自动降级为进程内计数） |
 | 异步任务 | FastAPI BackgroundTasks | 知识抽取等后台任务（进程内执行，非独立队列） |
 | AI 服务 | MaaS（华为云模型即服务） | LLM 知识抽取、问题生成、分身对话、Embedding |
 | 图片识别 | 多模态视觉模型（OpenAI 兼容，OCR_* 配置） | 图片笔记识别为文本后汇入知识抽取链路 |
@@ -223,7 +223,9 @@ demo1/
 以及一份**内置只读知识图谱** 719 个知识点 / 607 条关系）。**首次启动时若数据库或图谱为空会自动灌入**，
 因此克隆后直接运行就能看到完整界面，不会是满屏"暂无数据"。
 
-- 演示账号：手机号 **13900000001**，验证码 **123456**（需 `DEBUG=true` + `ALLOW_DEV_LOGIN=true`）
+- 演示账号：手机号 **13900000001**，验证码 **123456**（需 `DEBUG=true` + `ALLOW_DEV_LOGIN=true`，
+  且该手机号在 `DEV_LOGIN_PHONE_ALLOWLIST` 白名单内——**万能码只对白名单手机号生效**，
+  名单外号码即使验证码正确也会 401，避免"知道手机号就能登录别人账号"）
 - 关闭自动灌数据：设置环境变量 `DEMO_BOOTSTRAP=false`
 - **没有 Neo4j 也能看到知识图谱**：`GRAPH_BACKEND=auto`（默认）时，Neo4j 不可用会自动切换到
   内置只读演示图谱（只对演示账号生效，其他用户依然看到空图谱；写操作会返回明确提示）。
@@ -275,6 +277,8 @@ python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 > Windows 下若 `python` 是 Microsoft Store 占位程序，请改用 `py` 启动器，或先 `set PYTHON_CMD=<python 绝对路径>`。
 
 访问 `http://localhost:8000/docs` 查看 OpenAPI 交互文档。
+接口文档默认关闭（避免演示环境把完整接口面暴露到公网），本地查看需在 `backend/.env` 设置
+`ENABLE_API_DOCS=true` 后重启；生产/演示部署保持 `false`。
 
 ### 4. 运行测试
 
@@ -301,17 +305,12 @@ npm run dev
 
 访客对话页地址：`http://localhost:5173/chat/{avatarId}`（无需登录）。
 
-## 部署（含零成本公网体验地址）
+## 部署（自建服务器）
 
-仓库根目录提供 `Dockerfile`（**单服务镜像**：前端构建产物由后端直接托管，同源无跨域）与
-`render.yaml`（Render 一键部署蓝图），可部署到任意容器平台。
+仓库根目录提供 `Dockerfile`（**单服务镜像**：前端构建产物由后端直接托管，同源无跨域），
+可部署到任意容器平台。
 
-**零成本方案（Render 免费档，零外部数据库依赖）** 完整步骤见
-[`docs/部署-免费云Render.md`](docs/部署-免费云Render.md)：无需备案、无需信用卡，
-项目内置只读演示图谱（Neo4j Aura 不对中国大陆开放），首次启动自动灌入演示数据，
-配合 UptimeRobot 保活即可长期给他人体验。
-
-**自建服务器方案（当前线上环境）**：用 `docker-compose.prod.yml` 一条命令起全栈
+**线上环境**：用 `docker-compose.prod.yml` 一条命令起全栈
 （应用容器 + Neo4j，图谱可写、支持上传笔记自动抽取），服务器初始化脚本见
 [`deploy/setup-server.sh`](deploy/setup-server.sh)（自动安装 Docker、2G swap、Caddy 反向代理与每日备份）。
 
@@ -320,10 +319,20 @@ npm run dev
 docker build -t krp .
 docker run --rm -p 8000:8000 \
   -e DEBUG=true -e ALLOW_DEV_LOGIN=true -e SECRET_KEY=change-me-demo-only \
+  -e ALLOW_WEAK_SECRET=true \
+  -e DEV_LOGIN_PHONE_ALLOWLIST=13900000001 \
   -e POSTGRES_URL=sqlite+aiosqlite:///./krp.db -e DEMO_BOOTSTRAP=true \
   krp
 # 打开 http://localhost:8000
 ```
+
+> `ALLOW_WEAK_SECRET=true` 只是让上面这个随手写的演示密钥能通过启动校验。
+> 真实部署必须换 `openssl rand -hex 32` 生成的密钥，并且**不要**设这个开关——
+> 它是「弱密钥一律拒绝启动」的唯一逃生阀，留着等于把校验关掉。
+
+> **HTTPS 必读**：登录态是放在浏览器本地存储里的 JWT，用 `http://IP` 直连时 token 在网络上
+> 是明文的。正式对外演示请先准备域名，`deploy/setup-server.sh` 检测到 `DOMAIN` 会自动用
+> Caddy 申请并续期证书（HTTPS）；已有的 IP 站点补域名后可执行 `deploy/renew-domain.sh` 切换。
 
 ## API 接口概览
 
@@ -412,7 +421,8 @@ docker run --rm -p 8000:8000 \
 | `UPLOAD_DIR` | 笔记文件存储目录 | ./uploads |
 | `MAX_FILE_SIZE` | 最大文件大小（字节） | 10485760 (10MB) |
 | `NEO4J_URI` | Neo4j 连接地址 | bolt://localhost:7687 |
-| `SECRET_KEY` | JWT 签名密钥 | （生产环境必须修改） |
+| `SECRET_KEY` | JWT 签名密钥 | （生产环境必须修改；含 change-me/secret/请替换 等字样会拒绝启动） |
+| `ALLOW_WEAK_SECRET` | 弱密钥逃生阀 | false（只在本地开发设为 true） |
 
 ## 开发路线图
 
@@ -427,7 +437,6 @@ docker run --rm -p 8000:8000 \
 
 ## 相关文档
 
-- [免费云部署指南](docs/部署-免费云Render.md) — Render 免费档（零外部数据库依赖），零成本公网体验地址
 - [作品说明与场景亮点](docs/00-作品说明与场景亮点.md) — 场景背景、功能架构、核心亮点、环境依赖与码道应用
 - [需求规格说明书](docs/01-需求规格说明书.md) — 21 个 User Story + 验收标准 + 交互原型 + 里程碑
 - [高层架构与系统设计](docs/02-高层架构与系统设计.md) — 架构图、模块划分、技术选型、数据流、RAG/调度算法与部署

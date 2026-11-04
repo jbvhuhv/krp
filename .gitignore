@@ -18,8 +18,15 @@ backend/.env
 # 本地数据库
 *.db
 *.sqlite3
+# SQLite WAL 模式会产生这两个附属文件，之前没被 *.db 覆盖，git status 里一直是脏的
+*.db-wal
+*.db-shm
 # 例外：随仓库分发的演示数据（已脱敏，供空库首次启动自动灌入）
 !backend/demo/krp-demo.db
+
+# 临时导出/调试脚本产物（评审期间生成的接口快照、健康检查结果等）
+_openapi.json
+_oa_check.json
 
 # 日志
 *.log

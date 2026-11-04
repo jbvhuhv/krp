@@ -39,10 +39,45 @@
 - 数字分身走 **WebSocket**：检查事件流是否符合预期 `welcome → sources → chunk → done`；确认反向代理正确转发 WebSocket upgrade（Vite / Nginx 需开启 `ws` 支持）；后端 WS 端点 `/api/v1/avatar/chat/{avatarId}`；鉴权失败会导致 WS 关闭，检查请求携带的 Token 是否有效。
 - 宠物走 **SSE**（非 WebSocket）：端点为 `POST /api/v1/pet/chat`，返回 `text/event-stream`；确认代理未缓冲/未关闭长连接。
 
-## 5. Docker 部署时的环境变量优先级
+## 5. 登录返回 401「验证码错误或已过期」，但验证码确实是对的
+
+**症状**：演示环境用 `123456` 登录，一直 401。
+
+**排查路径**：
+- 万能码生效需要 **三个条件同时满足**：`DEBUG=true`、`ALLOW_DEV_LOGIN=true`、
+  `SMS_DEV_MASTER_CODE` 非空；任一不满足都会被静默降级。
+- 第四个条件（2026-11 安全加固后新增）：登录手机号必须在 **`DEV_LOGIN_PHONE_ALLOWLIST`** 白名单内。
+  该值为**空**时，万能码对所有手机号都不生效——这是刻意的安全默认值，
+  防止"任意手机号 + 公开万能码 = 任意账号被接管"。
+- 启动日志会直接说明当前状态：白名单为空时打印
+  `开发登录已开启，但 DEV_LOGIN_PHONE_ALLOWLIST 为空`；配置正确时打印实际生效的白名单号码。
+- 生产环境排查同样从日志看：只要出现 `ALLOW_DEV_LOGIN 已被强制关闭`，说明 `DEBUG` 或
+  `SMS_DEV_MASTER_CODE` 没配好。
+
+## 6. 启动直接报 `SECRET_KEY 不合规`（起不来）
+
+**症状**：容器反复重启，日志最后一行是 `RuntimeError: SECRET_KEY 不合规：...`。
+
+**原因**：JWT 用 HS256 签名，密钥就是全部安全性。只要密钥含
+`change-me` / `secret` / `demo` / `请替换` 等字样，或短于 16 位，就会被判定为「没配」。
+这条校验**与 `DEBUG` 无关**——演示环境为了保住万能码登录把 `DEBUG` 设成了 `true`，
+早期版本因此在 `DEBUG=true` 时只告警不拦截，于是 `.env.production` 里原样留着
+`SECRET_KEY=请替换为随机字符串` 也能跑起来，等于谁都能伪造登录态。
+
+**处理**：
+```bash
+openssl rand -hex 32        # 生成后写进 .env.production
+docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+```
+本地开发确实无所谓时，在 `backend/.env` 显式设 `ALLOW_WEAK_SECRET=true` 放行；
+**该开关不要出现在生产环境的任何配置文件里**。
+
+## 7. Docker 部署时的环境变量优先级
 
 - `docker-compose.yml` 的 backend 服务同时使用 `env_file: ./backend/.env` 和 `environment:`；
 - 优先级：`environment:` > `env_file:` > Dockerfile ENV；
 - 因此容器内 `NEO4J_URI=bolt://neo4j:7687`（compose 内网），覆盖 `backend/.env` 的 `bolt://localhost:7687`；
 - **`NEO4J_PASSWORD` 未在 compose 覆盖，取自 `backend/.env`，必须与 neo4j 服务密码一致**；
-- **`DEBUG` 已在 compose 显式设为 `false`**，生产环境万能码后门关闭。
+- **`DEBUG` 在 `docker-compose.prod.yml` 里是 `true`**（演示态：短信通道未接通，靠白名单万能码登录）。
+  真正的安全边界不再是 `DEBUG`，而是 `DEV_LOGIN_PHONE_ALLOWLIST`（只有名单内号码能用万能码）
+  与 `ENABLE_API_DOCS=false`（接口面不公开）。接好真实短信后应整体改回 `false`。
