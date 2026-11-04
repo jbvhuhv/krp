@@ -9,7 +9,7 @@
     若前端对 400 做了特殊提示，需要同步调整。
 """
 
-from fastapi import HTTPException, UploadFile, status
+from fastapi import HTTPException, UploadFile
 
 CHUNK_SIZE = 64 * 1024
 
@@ -17,7 +17,9 @@ CHUNK_SIZE = 64 * 1024
 def _too_large(limit_bytes: int) -> HTTPException:
     limit_mb = max(1, limit_bytes // (1024 * 1024))
     return HTTPException(
-        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+        # 413 直接用数字：starlette 对 HTTP_413_* 常量改过名（CONTENT_TOO_LARGE），
+        # 写死数字可同时兼容新旧版本，避免部署环境版本差异导致的 AttributeError。
+        status_code=413,
         detail=f"文件超过 {limit_mb}MB 上限，请压缩后重试",
     )
 

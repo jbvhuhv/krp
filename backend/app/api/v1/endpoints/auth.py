@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
+from app.core import rate_limit
 from app.core.config import settings
 from app.core.database import redis_client
 from app.core.logger import get_logger
@@ -53,9 +54,11 @@ async def send_code(payload: SendCodeRequest):
         raise
     except Exception as exc:
         logger.warning("[SMS] 缓存服务不可用: %s", exc)
+        # 演示环境没有 Redis，验证码根本存不下来，用户看到「发送成功」才是更糟的假象。
+        # 这里把原因和出路一起说清楚，避免访客在登录框上反复点「获取验证码」。
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="服务暂时不可用，请稍后重试",
+            detail="短信验证码服务暂不可用（未配置缓存服务），请使用演示账号登录",
         ) from None
 
     # 安全：验证码明文绝不写入日志（日志通常被采集/长期保留）。只记录脱敏号码。
@@ -74,19 +77,15 @@ async def login(payload: LoginRequest, db: AsyncSession = Depends(get_db)):
             detail="手机号格式不正确",
         )
 
-    # 登录失败次数限制：同一手机号在窗口期内失败过多则暂时拒绝，防止 6 位验证码被枚举
+    # 登录失败次数限制：同一手机号在窗口期内失败过多则暂时拒绝，防止 6 位验证码被枚举。
+    # 计数统一走 rate_limit：优先 Redis，缓存不可用时自动降级为进程内计数——
+    # 原实现是「缓存异常就跳过限流」，等于 Redis 一挂，登录爆破就没有任何约束。
     fail_key = f"login:fail:{phone}"
-    try:
-        fail_count = await redis_client.get(fail_key)
-        if fail_count and int(fail_count) >= settings.LOGIN_MAX_FAILURES:
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="登录失败次数过多，请稍后再试",
-            )
-    except HTTPException:
-        raise
-    except Exception as exc:  # 缓存不可用时不阻断正常登录，仅降级记录
-        logger.warning("[AUTH] 失败计数不可用: %s", type(exc).__name__)
+    if await rate_limit.get(fail_key) >= settings.LOGIN_MAX_FAILURES:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="登录失败次数过多，请稍后再试",
+        )
 
     is_valid = False
     dev_master_code = (
@@ -94,7 +93,13 @@ async def login(payload: LoginRequest, db: AsyncSession = Depends(get_db)):
         if settings.DEBUG and settings.ALLOW_DEV_LOGIN
         else ""
     )
-    if dev_master_code and secrets.compare_digest(code, dev_master_code):
+    # 安全：万能码只对白名单手机号生效。只校验 code 不校验 phone 的话，
+    # 任何人拿着公开的万能码 + 对方手机号，就能直接登进对方账号（账号接管）。
+    if (
+        dev_master_code
+        and phone in settings.dev_login_allowlist()
+        and secrets.compare_digest(code, dev_master_code)
+    ):
         is_valid = True
         logger.warning(
             "[AUTH] 使用开发万能验证码登录 phone=%s****%s", phone[:3], phone[-4:]
@@ -103,31 +108,24 @@ async def login(payload: LoginRequest, db: AsyncSession = Depends(get_db)):
         code_key = f"sms:code:{phone}"
         try:
             stored_code = await redis_client.get(code_key)
-            if stored_code and secrets.compare_digest(stored_code, code):
-                is_valid = True
+        except Exception:  # noqa: BLE001 - 缓存不可用等价于验证码不存在，走失败分支
+            stored_code = None
+        if stored_code and secrets.compare_digest(stored_code, code):
+            is_valid = True
+            try:
                 await redis_client.delete(code_key)
-        except Exception:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="验证码错误或已过期",
-            ) from None
+            except Exception:  # noqa: BLE001 - 删除失败不影响本次登录结果
+                pass
 
     if not is_valid:
-        try:
-            await redis_client.incr(fail_key)
-            await redis_client.expire(fail_key, settings.LOGIN_FAILURE_WINDOW_SECONDS)
-        except Exception:
-            pass
+        await rate_limit.incr(fail_key, settings.LOGIN_FAILURE_WINDOW_SECONDS)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="验证码错误或已过期",
         )
 
     # 登录成功：清除失败计数，避免正常用户被历史失败拖累
-    try:
-        await redis_client.delete(fail_key)
-    except Exception:
-        pass
+    await rate_limit.reset(fail_key)
 
 
     result = await db.execute(select(User).where(User.phone == phone))

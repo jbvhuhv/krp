@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.models.avatar import Avatar, ChatMessage
+from app.models.avatar import ChatMessage
 from app.models.note import Note
 from app.models.reflection import ReflectionRecord
 from app.services.avatar_service import BLOCK_MESSAGE, AvatarService
@@ -195,7 +195,7 @@ class TestStreamAnswerAntiHallucination:
         async for _ in avatar_service.stream_answer(avatar, "超纲问题", visitor_id="v1"):
             pass
 
-        from sqlalchemy import select, func
+        from sqlalchemy import func, select
         count = await test_db.scalar(
             select(func.count(ChatMessage.id)).where(ChatMessage.avatar_id == avatar.id)
         )

@@ -16,7 +16,7 @@ from app.core.config import settings
 from app.core.database import close_db_connections
 from app.core.exceptions import KnowledgeBaseException
 from app.core.logger import get_logger, get_trace_id, setup_logging
-from app.core.middleware import TraceIdMiddleware
+from app.core.middleware import SecurityHeadersMiddleware, TraceIdMiddleware
 
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
@@ -59,7 +59,7 @@ async def lifespan(app: FastAPI):
     bootstrap_sqlite()
     await ensure_schema()
     await init_vector_index(neo4j_driver)
-    # 图谱为空时导入演示图谱（Render 首次部署 / 本地首次运行即可看到完整知识图谱）
+    # 图谱为空时导入演示图谱（首次部署 / 本地首次运行即可看到完整知识图谱）
     await bootstrap_neo4j(neo4j_driver)
     # 探测 Neo4j 可用性：不可用时图谱退回「内置只读演示图谱」，避免整页空白
     from app.services.graph import ping_neo4j
@@ -97,7 +97,13 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.APP_VERSION,
-    openapi_url=f"{settings.API_V1_PREFIX}/openapi.json",
+    # 接口文档默认关闭：演示环境常常 DEBUG=true，若不单独控制，/docs 会把完整接口面
+    # 公开给公网（含全部端点与参数结构）。本地需要看文档时在 .env 设 ENABLE_API_DOCS=true。
+    openapi_url=(
+        f"{settings.API_V1_PREFIX}/openapi.json" if settings.ENABLE_API_DOCS else None
+    ),
+    docs_url="/docs" if settings.ENABLE_API_DOCS else None,
+    redoc_url="/redoc" if settings.ENABLE_API_DOCS else None,
     lifespan=lifespan,
 )
 
@@ -109,6 +115,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.add_middleware(TraceIdMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
 
 app.include_router(api_router, prefix=settings.API_V1_PREFIX)
 
@@ -179,15 +186,23 @@ async def health(deep: bool = False):
 
 
 def _resolve_spa_dir() -> str | None:
-    """定位前端构建产物目录（存在 index.html 才算有效）。"""
+    """定位前端构建产物目录（存在 index.html 才算有效）。
+
+    目录关系（以 backend/app/main.py 为基准）：
+        backend_dir = 上一级（仓库里是 backend/，容器里是 /app）
+        repo_root   = 再上一级（仓库根；容器里没有前端源码，该候选自然落空）
+    早期实现把 backend_dir 多退了一级，导致「本地直接 uvicorn 起后端 + 后端托管前端」
+    这条路径永远找不到 frontend/dist，所有页面 404（只有容器里碰巧能用）。
+    """
     candidates = []
     if settings.FRONTEND_DIST:
         candidates.append(settings.FRONTEND_DIST)
-    backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    repo_root = os.path.abspath(os.path.join(backend_dir, ".."))
     candidates.extend(
         [
             os.path.join(backend_dir, "frontend_dist"),  # 容器内（Dockerfile 拷贝到此处）
-            os.path.abspath(os.path.join(backend_dir, "..", "frontend", "dist")),  # 仓库内
+            os.path.join(repo_root, "frontend", "dist"),  # 仓库内（前端已 npm run build）
         ]
     )
     for cand in candidates:
@@ -196,8 +211,30 @@ def _resolve_spa_dir() -> str | None:
     return None
 
 
+def _resolve_static_file(root: str, relative: str) -> str | None:
+    """把请求路径安全地解析为 root 内的文件；越界（`..`、绝对路径、跨盘符）返回 None。
+
+    安全说明：SPA 回退曾直接 `os.path.join(root, full_path)` + `isfile` 就返回文件，
+    而 `{full_path:path}` 会原样接收 `../`（uvicorn 还会把 %2F 解码成 /），
+    于是 `/..%2F..%2Fbackend%2F.env`、`/..%2Fkrp.db` 能读走密钥与整个业务库。
+    StaticFiles 自带这层校验，手写 handler 必须自己补。
+    """
+    if not relative or "\x00" in relative:
+        return None
+    root_real = os.path.realpath(root)
+    candidate = os.path.realpath(os.path.join(root_real, relative))
+    try:
+        # commonpath 兼容不同盘符/大小写，比 startswith 可靠（后者会放过 /root-evil）
+        if os.path.commonpath([root_real, candidate]) != root_real:
+            return None
+    except ValueError:  # Windows 跨盘符
+        return None
+    return candidate if os.path.isfile(candidate) else None
+
+
 _SPA_DIR = _resolve_spa_dir()
 if _SPA_DIR:
+    _SPA_ROOT = os.path.realpath(_SPA_DIR)
     _assets_dir = os.path.join(_SPA_DIR, "assets")
     if os.path.isdir(_assets_dir):
         # 带哈希的静态资源可长缓存
@@ -214,10 +251,10 @@ if _SPA_DIR:
         """
         if full_path in _RESERVED or full_path.startswith(_API_PREFIX) or full_path.startswith("uploads/"):
             raise HTTPException(status_code=404, detail="Not Found")
-        candidate = os.path.join(_SPA_DIR, full_path)
-        if full_path and os.path.isfile(candidate):
+        candidate = _resolve_static_file(_SPA_ROOT, full_path)
+        if candidate:
             return FileResponse(candidate)
-        return FileResponse(os.path.join(_SPA_DIR, "index.html"))
+        return FileResponse(os.path.join(_SPA_ROOT, "index.html"))
 
     logger.info("已启用前端静态托管：%s", _SPA_DIR)
 

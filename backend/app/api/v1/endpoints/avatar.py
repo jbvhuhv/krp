@@ -19,6 +19,7 @@ from app.api.deps import (
     get_avatar_service,
     get_current_user_id,
 )
+from app.core import rate_limit
 from app.core.config import DEFAULT_WELCOME_MESSAGE, settings
 from app.core.database import AsyncSessionLocal
 from app.core.upload_guard import read_upload_limited
@@ -261,6 +262,25 @@ def _parse_incoming(raw: str) -> tuple[str, str | None]:
     return text, None
 
 
+def _client_ip(websocket: WebSocket) -> str:
+    """取访客真实来源 IP（用于公开聊天限流）。
+
+    反代链路：浏览器 → Caddy → 127.0.0.1:8000。此时 `websocket.client.host` 恒为
+    反代地址，按它计数等于「全站共享一个桶」。Caddy 会把真实来源写进
+    X-Forwarded-For；**取最后一跳**而不是第一跳：客户端可以自己塞一段伪造前缀，
+    而反代追加在末尾的那一段才代表真实连接来源。
+    """
+    forwarded = websocket.headers.get("x-forwarded-for")
+    if forwarded:
+        last = forwarded.split(",")[-1].strip()
+        if last:
+            return last
+    real_ip = websocket.headers.get("x-real-ip")
+    if real_ip:
+        return real_ip.strip()
+    return websocket.client.host if websocket.client else "unknown"
+
+
 @router.websocket("/chat/{avatar_id}")
 async def chat(websocket: WebSocket, avatar_id: str):
     await websocket.accept()
@@ -277,12 +297,38 @@ async def chat(websocket: WebSocket, avatar_id: str):
         welcome = avatar.welcome_message or DEFAULT_WELCOME_MESSAGE
         await websocket.send_json({"type": "welcome", "message": welcome})
 
+        # 访客聊天是公开入口（无需登录），必须自带用量闸门，否则任何人都能拿它刷模型额度。
+        # 计数按「分身 + 来源 IP」隔离：既防单点刷爆，也不会因为别人刷而误伤正常访客。
+        #
+        # 为什么不能直接用 websocket.client.host：生产是 Caddy 反代到 127.0.0.1:8000，
+        # 所有访客的连接源地址都是 127.0.0.1 —— 那样全场会挤进同一个桶，
+        # 「每人每分钟 20 条」实际变成「全站每分钟 20 条」，两个访客就会互相把对方锁住。
+        client_ip = _client_ip(websocket)
+        gate_key = f"visitor-chat:{avatar_id}:{client_ip}"
+        max_chars = settings.VISITOR_CHAT_MAX_CHARS
+        max_per_minute = settings.VISITOR_CHAT_MAX_PER_MINUTE
+
         history: list[dict] = []
         try:
             while True:
                 raw = await websocket.receive_text()
                 query, visitor_id = _parse_incoming(raw)
                 if not query:
+                    continue
+
+                if len(query) > max_chars:
+                    await websocket.send_json(
+                        {
+                            "type": "error",
+                            "message": f"问题太长了，请控制在 {max_chars} 字以内",
+                        }
+                    )
+                    continue
+
+                if await rate_limit.incr(gate_key, 60) > max_per_minute:
+                    await websocket.send_json(
+                        {"type": "error", "message": "提问过于频繁，请稍后再试"}
+                    )
                     continue
 
                 answer = ""

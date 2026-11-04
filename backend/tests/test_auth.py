@@ -1,6 +1,8 @@
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
+
+from app.core.config import settings
 
 pytestmark = pytest.mark.asyncio
 
@@ -35,7 +37,10 @@ class MockRedis:
 @pytest.fixture
 def mock_redis():
     r = MockRedis()
-    with patch("app.api.v1.endpoints.auth.redis_client", r):
+    # 登录失败计数已收敛到 app.core.rate_limit（Redis 不可用时进程内兜底），两个模块都要替换
+    with patch("app.api.v1.endpoints.auth.redis_client", r), patch(
+        "app.core.rate_limit.redis_client", r
+    ):
         yield r
 
 
@@ -116,6 +121,52 @@ async def test_login_master_code(client, mock_redis):
     resp = await client.post("/api/v1/auth/login", json={"phone": phone, "code": "123456"})
     assert resp.status_code == 200
     assert resp.json()["access_token"]
+
+
+async def test_login_master_code_phone_not_allowlisted(client, mock_redis):
+    """万能码只认白名单手机号：名单外的号码即使验证码正确也必须 401。
+
+    回归用例：修复前只比对 code 不比对 phone，任何人拿公开万能码 + 对方手机号即可登录对方账号。
+    """
+    resp = await client.post(
+        "/api/v1/auth/login", json={"phone": "13700000000", "code": "123456"}
+    )
+    assert resp.status_code == 401
+    assert "验证码错误" in resp.json()["detail"]
+
+
+async def test_login_fail_count_limits_when_redis_down(client, monkeypatch):
+    """Redis 不可用时仍必须限流：缓存故障不能变成「可以无限枚举验证码」。"""
+
+    class BrokenRedis:
+        async def get(self, *args, **kwargs):
+            raise TimeoutError("redis down")
+
+        async def setex(self, *args, **kwargs):
+            raise TimeoutError("redis down")
+
+        async def incr(self, *args, **kwargs):
+            raise TimeoutError("redis down")
+
+        async def expire(self, *args, **kwargs):
+            raise TimeoutError("redis down")
+
+        async def delete(self, *args, **kwargs):
+            raise TimeoutError("redis down")
+
+    monkeypatch.setattr(settings, "LOGIN_MAX_FAILURES", 2)
+    with patch("app.api.v1.endpoints.auth.redis_client", BrokenRedis()), patch(
+        "app.core.rate_limit.redis_client", BrokenRedis()
+    ):
+        for _ in range(2):
+            resp = await client.post(
+                "/api/v1/auth/login", json={"phone": "13700000001", "code": "000000"}
+            )
+            assert resp.status_code == 401
+        resp = await client.post(
+            "/api/v1/auth/login", json={"phone": "13700000001", "code": "000000"}
+        )
+        assert resp.status_code == 429
 
 
 async def test_login_invalid_phone(client, mock_redis):

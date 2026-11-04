@@ -1,8 +1,9 @@
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
-from unittest.mock import AsyncMock, MagicMock
 
 import app.models.avatar  # noqa: F401
 import app.models.community  # noqa: F401
@@ -22,10 +23,31 @@ from app.api.deps import (
     get_reflection_service,
 )
 from app.core.config import settings
+from app.core.rate_limit import reset_all_in_memory
 from app.main import app
 from app.models.user import Base
 
 TEST_USER_ID = "test-user-0001"
+
+# 测试用万能码白名单：覆盖 test_auth / test_pet 里用到的手机号。
+TEST_DEV_LOGIN_ALLOWLIST = "13900000001,13800138004,13612345678"
+
+
+@pytest.fixture(autouse=True)
+def dev_login_settings(monkeypatch):
+    """固定「开发登录」相关配置，让测试不依赖开发者本地的 backend/.env。
+
+    万能码自 2026-11 起只对白名单手机号生效（防任意账号接管），
+    测试必须显式给出白名单，否则相关用例会 401。
+    """
+    monkeypatch.setattr(settings, "DEBUG", True)
+    monkeypatch.setattr(settings, "ALLOW_DEV_LOGIN", True)
+    monkeypatch.setattr(settings, "SMS_DEV_MASTER_CODE", "123456")
+    monkeypatch.setattr(settings, "DEV_LOGIN_PHONE_ALLOWLIST", TEST_DEV_LOGIN_ALLOWLIST)
+    # 进程内兜底计数是全局状态，用例之间要清干净
+    reset_all_in_memory()
+    yield
+    reset_all_in_memory()
 
 
 @pytest.fixture
