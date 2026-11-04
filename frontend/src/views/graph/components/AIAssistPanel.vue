@@ -1,5 +1,5 @@
 <script setup>
-import { ref, watch, computed } from 'vue'
+import { ref, watch, computed, nextTick } from 'vue'
 
 const visible = defineModel('visible', { type: Boolean, default: false })
 
@@ -7,11 +7,37 @@ const props = defineProps({
   mode: { type: String, default: 'verify' }, // verify | hint | generate
   loading: { type: Boolean, default: false },
   verifyResult: { type: Object, default: () => null },
-  hintResult: { type: Object, default: () => null },
+  hintMessages: { type: Array, default: () => [] },
   previewNodes: { type: Array, default: () => [] },
 })
 
-const emit = defineEmits(['accept-missing', 'insert-suggest', 'insert-subtree', 'regenerate'])
+const emit = defineEmits(['accept-missing', 'insert-suggest', 'insert-subtree', 'send-hint'])
+
+const hintInput = ref('')
+const hintScroll = ref(null)
+
+function sendHint() {
+  const text = hintInput.value.trim()
+  if (!text || props.loading) return
+  hintInput.value = ''
+  emit('send-hint', text)
+}
+
+function pickSuggestion(s) {
+  if (props.loading) return
+  emit('send-hint', s.name)
+}
+
+watch(
+  () => props.hintMessages,
+  () => {
+    nextTick(() => {
+      const el = hintScroll.value
+      if (el) el.scrollTop = el.scrollHeight
+    })
+  },
+  { deep: true },
+)
 
 const checkedNames = ref([])
 
@@ -31,11 +57,12 @@ const selectedMissing = computed(() =>
   (props.verifyResult?.missing || []).filter((m) => checkedNames.value.includes(m.name)),
 )
 
-const hasHintContent = computed(() => {
-  const r = props.hintResult
-  if (!r) return false
-  return Boolean(r.guidance) || (r.suggestions || []).length > 0
-})
+const toggleMissing = (name) => {
+  const idx = checkedNames.value.indexOf(name)
+  if (idx === -1) checkedNames.value = [...checkedNames.value, name]
+  else checkedNames.value = checkedNames.value.filter((n) => n !== name)
+}
+
 
 function statusMeta(status) {
   if (status === 'error') return { label: '错误', cls: 'bad', icon: '❌' }
@@ -95,52 +122,71 @@ function close() {
         <div class="ai-block" v-if="(verifyResult?.missing || []).length">
           <div class="ai-block-title">建议补充（{{ selectedMissing.length }}/{{ verifyResult.missing.length }}）</div>
           <el-checkbox-group v-model="checkedNames">
-            <label
+            <div
               v-for="(m, i) in verifyResult.missing"
               :key="i"
               class="ai-missing"
+              @click="toggleMissing(m.name)"
             >
               <el-checkbox :value="m.name" />
               <div class="ai-missing-body">
                 <span class="ai-missing-name">{{ m.name }}</span>
                 <span v-if="m.summary" class="ai-missing-sum">{{ m.summary }}</span>
               </div>
-            </label>
+            </div>
           </el-checkbox-group>
         </div>
 
         <div v-if="!verifyResult" class="ai-empty">点击「校验整本书」开始结构校对</div>
       </template>
 
-      <!-- 辅助构思结果 -->
+      <!-- 辅助构思：对话式 -->
       <template v-if="isHint">
-        <div v-if="hintResult?.guidance" class="ai-overall">
-          <span class="ai-overall-label">思考引导</span>
-          <p class="ai-guidance">{{ hintResult.guidance }}</p>
-        </div>
-
-        <div class="ai-block" v-if="(hintResult?.suggestions || []).length">
-          <div class="ai-block-title">建议方向（点击加入）</div>
-          <button
-            v-for="(s, i) in hintResult.suggestions"
+        <div class="hint-chat" ref="hintScroll">
+          <div
+            v-for="(msg, i) in hintMessages"
             :key="i"
-            class="ai-suggest"
-            @click="emit('insert-suggest', s)"
+            class="hint-msg"
+            :class="`hint-msg--${msg.role}`"
           >
-            <div class="ai-suggest-main">
-              <span class="ai-suggest-name">{{ s.name }}</span>
-              <span class="ai-suggest-reason">{{ s.reason }}</span>
+            <div class="hint-msg-avatar">{{ msg.role === 'user' ? '🧭' : '✨' }}</div>
+            <div class="hint-msg-bubble">
+              <p v-if="msg.text" class="hint-msg-text">{{ msg.text }}</p>
+              <div
+                v-if="
+                  msg.role === 'ai'
+                  && !msg.text
+                  && !(msg.suggestions || []).length
+                  && loading
+                  && i === hintMessages.length - 1
+                "
+                class="hint-typing"
+              >
+                <span class="hint-typing-dot"></span>
+                <span class="hint-typing-dot"></span>
+                <span class="hint-typing-dot"></span>
+              </div>
+              <div v-if="(msg.suggestions || []).length" class="hint-suggest-list">
+                <button
+                  v-for="(s, j) in msg.suggestions"
+                  :key="j"
+                  class="hint-suggest"
+                  :disabled="loading"
+                  @click="pickSuggestion(s)"
+                >
+                  <span class="hint-suggest-name">{{ s.name }}</span>
+                  <span v-if="s.reason" class="hint-suggest-reason">{{ s.reason }}</span>
+                </button>
+              </div>
             </div>
-            <span class="ai-suggest-add">＋</span>
-          </button>
+          </div>
+          <div v-if="!hintMessages.length && !loading" class="ai-empty">正在为你准备构思方向…</div>
         </div>
-
-        <div v-if="!hasHintContent && !loading" class="ai-empty">暂无构思建议，换个方向试试</div>
       </template>
     </div>
 
-    <template v-if="isVerify && (verifyResult?.missing || []).length" #footer>
-      <div class="ai-footer">
+    <template #footer>
+      <div v-if="isVerify && (verifyResult?.missing || []).length" class="ai-footer">
         <el-button @click="emit('accept-missing', [])">全部忽略</el-button>
         <el-button
           type="primary"
@@ -149,6 +195,18 @@ function close() {
         >
           接受选中的补全（{{ selectedMissing.length }}）
         </el-button>
+      </div>
+      <div v-else-if="isHint" class="hint-input-bar">
+        <textarea
+          v-model="hintInput"
+          class="hint-input"
+          rows="1"
+          placeholder="说说你的想法，或点击上方建议方向…"
+          @keydown.enter.exact.prevent="sendHint"
+        ></textarea>
+        <button class="hint-send" :disabled="!hintInput.trim() || loading" @click="sendHint">
+          <span>发送</span>
+        </button>
       </div>
     </template>
   </el-drawer>
@@ -293,7 +351,7 @@ function close() {
 }
 .ai-missing {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 8px;
   padding: 8px 10px;
   border-radius: 10px;
@@ -301,18 +359,32 @@ function close() {
   border: 1px solid rgba(63, 185, 80, 0.18);
   margin-bottom: 6px;
   cursor: pointer;
+  user-select: none;
+}
+.ai-missing :deep(.el-checkbox) {
+  height: auto;
+  margin-right: 0;
+}
+.ai-missing :deep(.el-checkbox__label) {
+  padding-left: 0;
 }
 .ai-missing-body {
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
+  gap: 2px;
 }
 .ai-missing-name {
   color: #e6e8eb;
   font-size: 13px;
+  line-height: 18px;
 }
 .ai-missing-sum {
   color: #94a3b8;
   font-size: 12px;
+  line-height: 16px;
+  word-break: break-all;
 }
 .ai-suggest {
   display: flex;
@@ -389,4 +461,159 @@ function close() {
   background: #06b6d4;
   box-shadow: 0 0 6px #06b6d4;
 }
+
+/* ===== 辅助构思对话式 ===== */
+.hint-chat {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 4px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.hint-chat::-webkit-scrollbar { width: 5px; }
+.hint-chat::-webkit-scrollbar-thumb { background: rgba(6, 182, 212, 0.15); border-radius: 3px; }
+.hint-msg {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+.hint-msg--ai { flex-direction: row; }
+.hint-msg--user { flex-direction: row-reverse; }
+.hint-msg-avatar {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.hint-msg--ai .hint-msg-avatar {
+  background: rgba(6, 182, 212, 0.1);
+  border-color: rgba(6, 182, 212, 0.25);
+  box-shadow: 0 0 8px rgba(6, 182, 212, 0.2);
+}
+.hint-msg-bubble {
+  max-width: 78%;
+  padding: 10px 13px;
+  border-radius: 12px;
+  font-size: 13px;
+  line-height: 1.7;
+}
+.hint-msg--ai .hint-msg-bubble {
+  background: rgba(8, 11, 18, 0.6);
+  border: 1px solid rgba(6, 182, 212, 0.15);
+  color: #e6e8eb;
+  border-top-left-radius: 4px;
+}
+.hint-msg--user .hint-msg-bubble {
+  background: linear-gradient(135deg, rgba(6, 182, 212, 0.18), rgba(8, 145, 178, 0.12));
+  border: 1px solid rgba(6, 182, 212, 0.3);
+  color: #e6e8eb;
+  border-top-right-radius: 4px;
+}
+.hint-msg-text { margin: 0; }
+.hint-suggest-list {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.hint-suggest {
+  text-align: left;
+  padding: 8px 11px;
+  border-radius: 9px;
+  border: 1px solid rgba(6, 182, 212, 0.2);
+  background: rgba(6, 182, 212, 0.06);
+  color: #e6e8eb;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.hint-suggest:hover:not(:disabled) {
+  background: rgba(6, 182, 212, 0.14);
+  border-color: rgba(6, 182, 212, 0.45);
+  box-shadow: 0 0 12px rgba(6, 182, 212, 0.2);
+  transform: translateX(2px);
+}
+.hint-suggest:disabled { opacity: 0.5; cursor: wait; }
+.hint-suggest-name { font-size: 13px; font-weight: 600; }
+.hint-suggest-reason { font-size: 11.5px; color: #94a3b8; line-height: 1.5; }
+.hint-typing {
+  display: flex;
+  gap: 4px;
+  padding: 10px 13px;
+  width: fit-content;
+  border-radius: 12px;
+  background: rgba(8, 11, 18, 0.6);
+  border: 1px solid rgba(6, 182, 212, 0.15);
+}
+.hint-typing-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #06b6d4;
+  animation: hint-typing 1.2s infinite ease-in-out;
+}
+.hint-typing-dot:nth-child(2) { animation-delay: 0.2s; }
+.hint-typing-dot:nth-child(3) { animation-delay: 0.4s; }
+@keyframes hint-typing {
+  0%, 60%, 100% { opacity: 0.3; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-3px); }
+}
+.hint-input-bar {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  padding: 10px 14px;
+  background: rgba(8, 10, 16, 0.6);
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+.hint-input {
+  flex: 1;
+  resize: none;
+  min-height: 38px;
+  max-height: 110px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(4, 6, 12, 0.6);
+  color: #e6e8eb;
+  font-size: 13px;
+  line-height: 1.6;
+  font-family: inherit;
+  outline: none;
+  transition: all 0.2s;
+}
+.hint-input::placeholder { color: #3a3f47; }
+.hint-input:focus {
+  border-color: rgba(6, 182, 212, 0.4);
+  box-shadow: 0 0 0 3px rgba(6, 182, 212, 0.08);
+}
+.hint-send {
+  flex-shrink: 0;
+  height: 38px;
+  padding: 0 18px;
+  border: none;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #06b6d4, #0891b2);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.25s;
+  box-shadow: 0 2px 10px rgba(6, 182, 212, 0.3);
+}
+.hint-send:hover:not(:disabled) {
+  box-shadow: 0 4px 18px rgba(6, 182, 212, 0.45), 0 0 16px rgba(6, 182, 212, 0.25);
+  transform: translateY(-1px);
+}
+.hint-send:disabled { opacity: 0.5; cursor: not-allowed; }
 </style>

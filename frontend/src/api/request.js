@@ -25,7 +25,7 @@ export function notifyError(message) {
 
 const request = axios.create({
   baseURL: '/api/v1',
-  timeout: 30000,
+  timeout: 90000,
 })
 
 request.interceptors.request.use(

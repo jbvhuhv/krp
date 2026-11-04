@@ -380,6 +380,44 @@ function masteryColor(m) {
   return '#f87171'
 }
 
+function masteryLevel(m) {
+  if (m >= 90) return '精通'
+  if (m >= 70) return '掌握'
+  if (m >= 50) return '熟悉'
+  if (m >= 25) return '了解'
+  if (m > 0) return '入门'
+  return '未掌握'
+}
+
+function splitKeywords(name) {
+  if (!name) return []
+  const stop = new Set(['的', '与', '和', '在', '为', '是', '及', '或', '等', '中', '上', '下', '过程', '作用'])
+  const parts = name.split(/[与和、,，/]/).map((s) => s.trim()).filter((s) => s.length >= 2)
+  const set = new Set()
+  const add = (w) => {
+    if (w.length >= 2 && !stop.has(w)) set.add(w)
+  }
+  for (const p of parts) {
+    add(p)
+    if (p.length >= 3) {
+      for (let i = 0; i + 2 <= p.length; i++) add(p.slice(i, i + 2))
+    }
+  }
+  return [...set].sort((a, b) => b.length - a.length)
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+function highlightSource(text, keywords) {
+  if (!text) return ''
+  const esc = escapeHtml(text)
+  if (!keywords || !keywords.length) return esc
+  const pattern = keywords.map((k) => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')
+  return esc.replace(new RegExp(`(${pattern})`, 'g'), '<mark class="source-hit">$1</mark>')
+}
+
 function expandToNode(id) {
   const ancestors = new Set()
   let cur = flatNodes.value.find((n) => n.id === id)
@@ -630,13 +668,13 @@ const aiPanelVisible = ref(false)
 const aiMode = ref('verify')
 const aiLoading = ref(false)
 const verifyResult = ref(null)
-const hintResult = ref(null)
+const hintMessages = ref([])
 const previewNodes = ref([])
 const aiTargetNode = ref(null)
 
 function onAiCommand(command) {
   if (command === 'verify') runVerify()
-  else if (command === 'hint') promptHint()
+  else if (command === 'hint') openHintChat()
   else if (command === 'generate') runGenerate()
 }
 
@@ -660,51 +698,61 @@ async function runVerify() {
   }
 }
 
-async function promptHint() {
+async function openHintChat() {
   if (!currentNode.value) { ElMessage.warning('请先选中一个节点'); return }
-  let userIdea
-  try {
-    const { value } = await ElMessageBox.prompt(
-      '可填写你的初步想法，AI 会引导你完善；留空则直接给出可展开的方向建议。',
-      '辅助构思',
-      {
-        confirmButtonText: '开始',
-        cancelButtonText: '取消',
-        inputType: 'textarea',
-        inputPlaceholder: '（可留空）',
-      },
-    )
-    userIdea = (value || '').trim()
-  } catch {
-    return
-  }
-  runHint(userIdea)
-}
-
-async function runHint(userIdea) {
-  if (!currentNode.value) return
   aiMode.value = 'hint'
-  hintResult.value = null
+  hintMessages.value = []
   aiTargetNode.value = currentNode.value
   aiPanelVisible.value = true
+  hintMessages.value.push({
+    role: 'ai',
+    text: '先想想你最想搞清楚哪个点？说说你的想法，我可以帮你一步步理清；也可以从下面建议里挑一个深入探讨。',
+    suggestions: [],
+  })
+  await sendHintMessage('')
+}
+
+// 流式构思的取消句柄：再次提问或离开页面时中止上一条 SSE 连接，
+// 否则后端会继续跑完整个生成过程（白烧模型额度），前端连接也会悬挂。
+let hintAbort = null
+
+async function sendHintMessage(userIdea) {
+  const target = aiTargetNode.value || currentNode.value
+  if (!target) return
+  const idea = (userIdea || '').trim()
+  if (idea) {
+    hintMessages.value.push({ role: 'user', text: idea })
+  }
+  hintAbort?.abort()
+  hintAbort = new AbortController()
+  const { signal } = hintAbort
+  const isCurrent = () => hintAbort?.signal === signal
   aiLoading.value = true
+  const aiMsg = { role: 'ai', text: '', suggestions: [] }
+  hintMessages.value.push(aiMsg)
   try {
-    const res = await brainstormApi.suggest({
-      book_id: bookId.value,
-      node_id: currentNode.value.id,
-      mode: 'hint',
-      user_idea: userIdea || null,
-    })
-    if (res.status === 'failed') {
-      notifyError(res.message || 'AI 构思失败')
-      hintResult.value = null
-    } else {
-      hintResult.value = res
+    await brainstormApi.suggestStream(
+      { book_id: bookId.value, node_id: target.id, mode: 'hint', user_idea: idea || null },
+      (msg) => {
+        if (msg.type === 'delta') {
+          aiMsg.text += msg.content
+        } else if (msg.type === 'suggestions') {
+          aiMsg.suggestions = msg.suggestions || []
+        } else if (msg.type === 'error') {
+          aiMsg.text = aiMsg.text || (msg.message || 'AI 构思失败，请重试')
+        }
+      },
+      { signal },
+    )
+    if (!aiMsg.text && !aiMsg.suggestions.length) {
+      aiMsg.text = '暂无建议，换个方向试试'
     }
-  } catch {
-    hintResult.value = null
+  } catch (err) {
+    if (err?.name === 'AbortError') return
+    aiMsg.text = aiMsg.text || '网络异常，请重试'
   } finally {
-    aiLoading.value = false
+    // 只有「当前这条请求」才能关掉加载态，避免旧请求回来把新请求的 loading 清掉
+    if (isCurrent()) aiLoading.value = false
   }
 }
 
@@ -826,6 +874,8 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', onResize)
   chartRef.value?.removeEventListener('contextmenu', onNativeContextMenu)
   clearTimeout(saveHintTimer)
+  hintAbort?.abort()
+  hintAbort = null
   chartInstance.value?.dispose()
   chartInstance.value = null
 })
@@ -1038,94 +1088,130 @@ watch(treeData, () => {
       append-to-body
     >
       <div class="drawer-inner" v-if="currentNode">
-        <div class="drawer-head">
-          <span class="drawer-eyebrow">
-            {{ currentNode.node_type === 'category' ? '目录' : '知识点' }}
-            <span v-if="currentNode.origin === 'ai'" class="drawer-ai">AI 生成</span>
-          </span>
+        <header class="drawer-head">
+          <div class="drawer-head-main">
+            <span class="drawer-eyebrow">
+              {{ currentNode.node_type === 'category' ? '目录' : '知识点' }}
+              <span v-if="currentNode.origin === 'ai'" class="drawer-ai">AI 生成</span>
+            </span>
+            <h2 class="drawer-title">{{ currentNode.name || '未命名' }}</h2>
+            <nav class="drawer-breadcrumb">
+              <span class="bc-item bc-book">{{ bookDisplayName }}</span>
+              <template v-for="item in breadcrumbPath" :key="item.id">
+                <span class="bc-sep">/</span>
+                <span class="bc-item" :class="{ 'bc-current': item.id === currentNodeId }">
+                  {{ item.name.replace(/\.md$/i, '') }}
+                </span>
+              </template>
+            </nav>
+          </div>
           <button class="drawer-close" aria-label="关闭" @click="closeDrawer">
             <el-icon><Close /></el-icon>
           </button>
+        </header>
+
+        <div class="drawer-body">
+          <section class="drawer-card">
+            <div class="drawer-card-head">
+              <span class="drawer-card-title">基本信息</span>
+            </div>
+            <div class="drawer-card-body">
+              <div class="drawer-field">
+                <label class="field-label">名称</label>
+                <input v-model="detailForm.name" class="drawer-input" placeholder="未命名" />
+              </div>
+              <div class="drawer-field" v-if="currentNode.node_type === 'knowledge'">
+                <label class="field-label">掌握度评分</label>
+                <div class="mastery-block">
+                  <div class="mastery-row">
+                    <el-rate
+                      :model-value="Math.round((currentNode.mastery || 0) / 20)"
+                      disabled
+                      size="large"
+                      :colors="['#f87171', '#fbbf24', '#34d399']"
+                    />
+                    <span class="mastery-pct">{{ Math.round(currentNode.mastery || 0) }}%</span>
+                    <span class="mastery-level" :style="{ color: masteryColor(currentNode.mastery || 0) }">
+                      {{ masteryLevel(currentNode.mastery || 0) }}
+                    </span>
+                  </div>
+                  <div class="mastery-bar">
+                    <div
+                      class="mastery-bar-fill"
+                      :style="{
+                        width: `${Math.min(100, Math.max(0, currentNode.mastery || 0))}%`,
+                        background: `linear-gradient(90deg, ${masteryColor(currentNode.mastery || 0)}, #06b6d4)`,
+                      }"
+                    ></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="drawer-card">
+            <div class="drawer-card-head">
+              <span class="drawer-card-title">
+                {{ currentNode.node_type === 'category' ? '归纳总结' : '知识点摘要' }}
+              </span>
+              <button
+                class="ai-btn"
+                :disabled="aiGenerating"
+                @click="generateAiSummary"
+              >
+                <span class="ai-btn-glow"></span>
+                <el-icon v-if="!aiGenerating"><MagicStick/></el-icon>
+                <el-icon v-else class="ai-spin"><Loading/></el-icon>
+                <span>{{ aiGenerating ? '生成中…' : 'AI 生成总结' }}</span>
+              </button>
+            </div>
+            <div class="drawer-card-body">
+              <textarea
+                v-model="detailForm.summary"
+                class="drawer-textarea"
+                :rows="9"
+                :placeholder="currentNode.node_type === 'category'
+                  ? '请输入该目录的归纳总结，或点击 AI 生成总结…'
+                  : '请输入知识点的摘要描述，或点击 AI 生成总结…'"
+              ></textarea>
+            </div>
+          </section>
+
+          <section
+            v-if="currentNode.node_type === 'knowledge' && sourceNote"
+            class="drawer-card source-card"
+          >
+            <div class="drawer-card-head">
+              <span class="drawer-card-title">来源笔记</span>
+              <strong class="source-title" :title="sourceNote.title">{{ sourceNote.title }}</strong>
+            </div>
+            <!-- highlightSource() 内部先 escapeHtml() 再高亮，关键词正则也已转义，故此处安全 -->
+            <!-- eslint-disable vue/no-v-html -->
+            <div
+              class="source-body"
+              v-html="highlightSource(sourceNote.content, splitKeywords(currentNode.name || ''))"
+            ></div>
+            <!-- eslint-enable vue/no-v-html -->
+          </section>
+
+          <button
+            v-if="currentNode.origin === 'ai'"
+            class="accept-ai-btn"
+            @click="acceptAiNode({ nodeId: currentNode.id })"
+          >
+            <el-icon><Check/></el-icon>
+            <span>接受该 AI 节点</span>
+          </button>
         </div>
 
-        <nav class="drawer-breadcrumb">
-          <span class="bc-item bc-book">{{ bookDisplayName }}</span>
-          <template v-for="item in breadcrumbPath" :key="item.id">
-            <span class="bc-sep">/</span>
-            <span class="bc-item" :class="{ 'bc-current': item.id === currentNodeId }">
-              {{ item.name.replace(/\.md$/i, '') }}
-            </span>
-          </template>
-        </nav>
-
-        <div class="drawer-field">
-          <label class="field-label">名称</label>
-          <input v-model="detailForm.name" class="drawer-input" placeholder="未命名" />
-        </div>
-
-        <div class="drawer-field" v-if="currentNode.node_type === 'knowledge'">
-          <label class="field-label">掌握度评分</label>
-          <div class="mastery-row">
-            <el-rate
-              :model-value="Math.round((currentNode.mastery || 0) / 20)"
-              disabled
-              size="large"
-              :colors="['#f87171', '#fbbf24', '#34d399']"
-            />
-            <span class="mastery-pct">{{ Math.round(currentNode.mastery || 0) }}%</span>
-          </div>
-        </div>
-
-        <div class="drawer-field">
-          <div class="field-label-row">
-            <label class="field-label">
-              {{ currentNode.node_type === 'category' ? '归纳总结' : '知识点摘要' }}
-            </label>
-            <button
-              class="ai-btn"
-              :disabled="aiGenerating"
-              @click="generateAiSummary"
-            >
-              <span class="ai-btn-glow"></span>
-              <el-icon v-if="!aiGenerating"><MagicStick/></el-icon>
-              <el-icon v-else class="ai-spin"><Loading/></el-icon>
-              <span>{{ aiGenerating ? '生成中…' : 'AI 生成总结' }}</span>
-            </button>
-          </div>
-          <textarea
-            v-model="detailForm.summary"
-            class="drawer-textarea"
-            :rows="9"
-            :placeholder="currentNode.node_type === 'category'
-              ? '请输入该目录的归纳总结，或点击 AI 生成总结…'
-              : '请输入知识点的摘要描述，或点击 AI 生成总结…'"
-          ></textarea>
-        </div>
-
-        <div v-if="currentNode.node_type === 'knowledge' && sourceNote" class="source-card">
-          <div class="source-head">
-            <el-icon class="source-icon"><Link/></el-icon>
-            <span class="source-label">来源笔记</span>
-            <strong class="source-title">{{ sourceNote.title }}</strong>
-          </div>
-          <div class="source-body"><pre>{{ sourceNote.content }}</pre></div>
-        </div>
-
-        <button
-          v-if="currentNode.origin === 'ai'"
-          class="accept-ai-btn"
-          @click="acceptAiNode({ nodeId: currentNode.id })"
-        >
-          <el-icon><Check/></el-icon>
-          <span>接受该 AI 节点</span>
-        </button>
-
-        <button class="save-glow-btn" :disabled="saving" @click="saveDetail">
-          <span class="save-glow"></span>
-          <el-icon v-if="!saving"><Check/></el-icon>
-          <el-icon v-else class="ai-spin"><Loading/></el-icon>
-          <span>{{ saving ? '保存中…' : '保存修改' }}</span>
-        </button>
+        <footer class="drawer-foot">
+          <button class="save-glow-btn" :disabled="saving" @click="saveDetail">
+            <span class="save-glow"></span>
+            <el-icon v-if="!saving"><Check/></el-icon>
+            <el-icon v-else class="ai-spin"><Loading/></el-icon>
+            <span>{{ saving ? '保存中…' : '保存修改' }}</span>
+          </button>
+        </footer>
       </div>
     </el-drawer>
 
@@ -1195,11 +1281,12 @@ watch(treeData, () => {
       :mode="aiMode"
       :loading="aiLoading"
       :verify-result="verifyResult"
-      :hint-result="hintResult"
+      :hint-messages="hintMessages"
       :preview-nodes="previewNodes"
       @accept-missing="onAcceptMissing"
       @insert-suggest="onInsertSuggest"
       @insert-subtree="onInsertSubtree"
+      @send-hint="sendHintMessage"
     />
 
     <!-- 已保存轻提示 -->
