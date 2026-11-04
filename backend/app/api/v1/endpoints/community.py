@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user_id, get_db, get_graph_service, get_optional_user_id
 from app.core.config import settings
+from app.core.logger import get_logger
 from app.core.upload_guard import read_upload_limited
 from app.models.community import (
     CommunityComment,
@@ -40,6 +41,7 @@ from app.services.graph_service import GraphService
 from app.services.notification_service import NotificationService
 
 router = APIRouter()
+logger = get_logger(__name__)
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 MAX_COVER_SIZE = 5 * 1024 * 1024
@@ -124,8 +126,10 @@ async def notify_post_author(
             target_type="post",
             target_id=post.id,
         )
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception:  # noqa: BLE001 - 通知失败不能影响点赞/评论主流程，但必须留痕
+        logger.warning(
+            "社区通知写入失败 post_id=%s type=%s", post.id, notif_type, exc_info=True
+        )
 
 
 def _derive_snapshot_meta(post: CommunityPost) -> tuple[str | None, int, int, str]:
@@ -729,7 +733,8 @@ async def _cleanup_fork_nodes(
     for node_id in reversed(node_ids):
         try:
             await graph_service.delete_node(user_id, node_id)
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001 - 回收本身失败只记账，不能掩盖原始异常
+            logger.warning("回滚克隆节点失败 node_id=%s", node_id, exc_info=True)
             continue
 
 

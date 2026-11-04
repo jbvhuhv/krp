@@ -50,7 +50,8 @@ async def _get_knowledge_threads(db: AsyncSession, user_id: str) -> list[Knowled
             .order_by(Note.upload_time.asc())
         )
         notes = result.scalars().all()
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 - 知识脉络是展示项，失败降级为空列表
+        logger.warning("查询知识脉络失败 user_id=%s", user_id, exc_info=True)
         return []
     return [
         KnowledgeThread(
@@ -75,7 +76,8 @@ async def get_pet_status(
     try:
         overview = await graph_service.get_mastery_overview(user_id)
         knowledge_total = int(overview.get("total", 0) or 0)
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 - 图谱不可用时知识点计数降级为 0
+        logger.warning("查询掌握度概览失败 user_id=%s", user_id, exc_info=True)
         knowledge_total = 0
 
     threads = await _get_knowledge_threads(db, user_id)
@@ -261,7 +263,8 @@ async def _get_knowledge_concepts(graph_service: GraphService, user_id: str) -> 
         graph_data = await graph_service.get_user_graph(user_id)
         nodes = graph_data.get("nodes", []) if graph_data else []
         return [n.get("name", "") for n in nodes if n.get("name")]
-    except Exception:
+    except Exception:  # noqa: BLE001 - 概念列表用于宠物对话上下文，失败则不带上下文
+        logger.warning("查询图谱概念失败 user_id=%s", user_id, exc_info=True)
         return []
 
 

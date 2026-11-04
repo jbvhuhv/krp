@@ -4,7 +4,6 @@ from xml.etree import ElementTree as ET
 
 import pypdf
 
-
 # 解析阶段的安全上限：上传文件本身已限制 10MB，但压缩包/PDF 可以「小体积解出大内容」，
 # 这里再加一道解压与结构上限，防止 zip 炸弹 / XML 实体扩展 / 超长 PDF 把内存和 CPU 打满。
 MAX_TEXT_CHARS = 2_000_000

@@ -24,6 +24,7 @@ from app.api.deps import (
 )
 from app.core.config import settings
 from app.core.constants import NOTE_STATUS
+from app.core.logger import get_logger
 from app.core.upload_guard import read_upload_limited
 from app.models.note import Note
 from app.schemas.note import NoteList, NoteOut
@@ -31,6 +32,7 @@ from app.services.extraction_service import ExtractionService
 from app.services.ocr_service import OcrError, OcrNotConfiguredError, OcrService
 
 router = APIRouter()
+logger = get_logger(__name__)
 
 
 def _to_out(note: Note, include_content: bool = False) -> NoteOut:
@@ -136,8 +138,10 @@ async def upload_note(
 
             # 文件解析为 CPU/IO 阻塞操作，放到线程池避免阻塞事件循环
             text_content = await asyncio.to_thread(parse_file, saved_path, fmt) or ""
-        except Exception:
-            # PDF/Word 等解析失败时正文留空，由抽取阶段判定为空
+        except Exception:  # noqa: BLE001 - PDF/Word 解析失败时正文留空，由抽取阶段判定为空
+            logger.warning(
+                "笔记文件解析失败，正文留空 note_id=%s fmt=%s", note_id, fmt, exc_info=True
+            )
             text_content = ""
 
     note = Note(
