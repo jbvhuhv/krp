@@ -215,8 +215,10 @@ class ExtractionService:
                     row = res.scalar_one_or_none()
                     if row:
                         book_title = row
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 - 书名只用于展示，失败时回退默认值，但要留痕
+                logger.warning(
+                    "读取笔记标题失败，书名回退默认 note_id=%s", note_id, exc_info=True
+                )
 
         _backfill_edges(result)
 

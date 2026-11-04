@@ -28,7 +28,7 @@ async def test_extraction_writes_to_graph(tmp_path):
 
     extraction_service = ExtractionService(ai_service=ai_service, graph_service=graph_service)
 
-    result = await extraction_service.extract_and_build_graph(
+    await extraction_service.extract_and_build_graph(
         note_id="note-001",
         user_id="user-001",
         file_path=str(note_file),
@@ -126,27 +126,34 @@ async def test_ai_service_parse_markdown_wrapped_json():
     assert result["nodes"][0]["name"] == "Y"
 
 
-@pytest.mark.xfail(
-    reason="契约漂移：生产已迁移 categories 树状格式，测试仍断言旧扁平格式",
-    strict=False,
-)
 async def test_ai_service_parse_invalid_json_returns_empty():
+    """解析失败要返回「空但结构完整」的结果。
+
+    结构以当前的 categories 树状格式为准（同 _parse_extraction_response 的 setdefault），
+    下游据此判断「这篇笔记没抽到知识」，缺 key 会直接 KeyError。
+    """
     from app.services.ai_service import AIService
 
     result = AIService._parse_extraction_response("not json at all")
-    assert result == {"nodes": [], "edges": []}
+    assert result["categories"] == []
+    assert result["nodes"] == []
+    assert result["edges"] == []
+    assert result["book_summary"] == ""
 
 
-@pytest.mark.xfail(
-    reason="契约漂移：生产已迁移 categories 树状格式，测试仍断言旧扁平格式",
-    strict=False,
-)
 async def test_extraction_prompt_formats_with_text():
+    """提示词模板占位符可正常填充，且输出契约是 categories 树状结构。
+
+    早期版本要求模型直接返回扁平的 {"nodes": [...]}，后来改成「目录-知识点」树
+    （book_summary / subject / categories / edges）。断言若还盯着旧格式，
+    模板被改坏也发现不了——这里对齐当前契约。
+    """
     from app.services.ai_service import EXTRACTION_PROMPT
 
     formatted = EXTRACTION_PROMPT.format(text="示例知识")
     assert "示例知识" in formatted
-    assert '{"nodes"' in formatted
+    assert '"categories"' in formatted
+    assert '"book_summary"' in formatted
 
 
 async def test_extract_knowledge_calls_llm_with_formatted_prompt():
@@ -333,11 +340,13 @@ async def _make_note_session():
     return engine, session_factory, Note
 
 
-@pytest.mark.xfail(
-    reason="契约漂移：nodes_count 现含 book 根节点，测试仍断言不含 book 根的旧语义",
-    strict=False,
-)
 async def test_extraction_updates_note_status_success(tmp_path):
+    """抽取成功要落库状态与计数。
+
+    nodes_count 现在是「2 个知识点 + 1 个书籍根节点 = 3」：写入图谱时会先建一个
+    book 根节点把它们挂起来，旧断言按 2 算，于是这条用例长期挂 xfail。
+    这里对齐真实语义，并额外验证根节点确实被计入（否则前端书架统计会少一层）。
+    """
     from sqlalchemy import select
 
     from app.services.extraction_service import ExtractionService
@@ -368,7 +377,8 @@ async def test_extraction_updates_note_status_success(tmp_path):
     async with session_factory() as session:
         note = (await session.execute(select(Note).where(Note.id == "n1"))).scalar_one()
         assert note.status == "success"
-        assert note.nodes_count == 2
+        # 2 个知识点 + 1 个书籍根节点
+        assert note.nodes_count == 3
         assert note.edges_count == 1
         assert note.processed_time is not None
     await engine.dispose()

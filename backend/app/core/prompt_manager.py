@@ -161,6 +161,12 @@ class PromptManager:
             user_idea=common_prompts.sanitize_user_input(user_idea),
         )
 
+    def get_brainstorm_guide_stream_prompt(self, node_name: str, user_idea: str) -> str:
+        return brainstorm_prompts.BRAINSTORM_GUIDE_STREAM_PROMPT.format(
+            node_name=node_name,
+            user_idea=common_prompts.sanitize_user_input(user_idea),
+        )
+
     def get_brainstorm_generate_prompt(
         self, node_name: str, node_summary: str
     ) -> str:

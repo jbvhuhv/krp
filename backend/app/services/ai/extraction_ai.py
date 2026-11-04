@@ -33,7 +33,10 @@ class ExtractionMixin:
             result = json.loads(text)
         except json.JSONDecodeError:
             logger.warning("LLM 返回非 JSON 内容，返回空结果")
-            return {"categories": [], "edges": [], "book_summary": ""}
+            # 注意：不要在这里直接 return 一个「少几个 key」的字典。
+            # 解析失败与解析成功必须返回同一套字段，否则下游按成功路径取 result["nodes"]
+            # 时会在「模型偶尔胡说」这种最常见的场景下抛 KeyError，把可控降级变成 500。
+            result = {}
         result.setdefault("categories", [])
         result.setdefault("edges", [])
         result.setdefault("book_summary", "")

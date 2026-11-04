@@ -87,6 +87,19 @@ BRAINSTORM_GUIDE_PROMPT = (
 {{"guidance": "引导文字，分点陈述，语气鼓励"}}"""
 )
 
+BRAINSTORM_GUIDE_STREAM_PROMPT = (
+    INJECTION_GUARD
+    + """
+
+你是思维导图引导助手。用户正在为知识点「{node_name}」补充内容，他目前的初步想法是：
+
+\"\"\"{user_idea}\"\"\"
+
+请不要直接给出答案或替他补全节点，而是提出 2-3 个引导性问题或思考方向，帮助他把这个想法想得更清楚、更完整。
+
+直接输出引导文字，分点陈述，语气鼓励。不要输出 JSON、不要用代码块包裹、不要加任何前言或解释。"""
+)
+
 BRAINSTORM_GENERATE_PROMPT = (
     INJECTION_GUARD
     + "\n\n"

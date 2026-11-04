@@ -1,5 +1,7 @@
-import pytest
+import json
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from app.api.deps import get_ai_service
 from app.api.v1.endpoints.brainstorm import _normalize_node_type, _to_node
@@ -197,6 +199,123 @@ class TestSuggestEndpoint:
         body = response.json()
         assert body["status"] == "failed"
         assert body["subtree"] == []
+
+def _parse_sse(raw: str) -> list[dict]:
+    """把 SSE 文本拆成事件列表（只关心 data: 行里的 JSON）。"""
+    events = []
+    for line in raw.splitlines():
+        if not line.startswith("data: "):
+            continue
+        events.append(json.loads(line[len("data: "):]))
+    return events
+
+
+class TestSuggestStreamEndpoint:
+    """流式构思回归用例。
+
+    背景：hint 分支曾把 pydantic 模型 `BrainstormNode` 直接交给 json.dumps，
+    导致 `TypeError: Object of type BrainstormNode is not JSON serializable`。
+    异常发生在响应已经开始之后，客户端只收到半截流，界面显示「暂无建议」，
+    而模型其实已经返回了结果。这里用「事件序列」把行为钉死。
+    """
+
+    async def test_hint_stream_returns_json_suggestions(
+        self, client, mock_graph_service, ai_override
+    ):
+        mock_graph_service.get_node_detail = AsyncMock(
+            return_value={"id": "node-1", "name": "牛顿第二定律", "summary": "F=ma"}
+        )
+
+        response = await client.post(
+            "/api/v1/brainstorm/suggest/stream",
+            json={"book_id": "book-1", "node_id": "node-1", "mode": "hint"},
+        )
+
+        assert response.status_code == 200
+        events = _parse_sse(response.text)
+        assert [e["type"] for e in events] == ["start", "suggestions", "done"]
+        # 关键断言：建议必须是可 JSON 序列化的结构，而不是被兜底成字符串
+        assert events[1]["suggestions"][0]["name"] == "惯性"
+        assert isinstance(events[1]["suggestions"][0], dict)
+
+    async def test_guide_stream_emits_deltas(
+        self, client, mock_graph_service, mock_ai_service, ai_override
+    ):
+        mock_graph_service.get_node_detail = AsyncMock(
+            return_value={"id": "node-1", "name": "牛顿第二定律", "summary": "F=ma"}
+        )
+
+        async def _fake_stream(*_args, **_kwargs):
+            for chunk in ("先做受力分析，", "再看合力方向"):
+                yield chunk
+
+        mock_ai_service.guide_idea_stream = _fake_stream
+
+        response = await client.post(
+            "/api/v1/brainstorm/suggest/stream",
+            json={
+                "book_id": "book-1",
+                "node_id": "node-1",
+                "mode": "hint",
+                "user_idea": "我想补充受力分析",
+            },
+        )
+
+        assert response.status_code == 200
+        events = _parse_sse(response.text)
+        assert events[0] == {"type": "start", "mode": "guide"}
+        text = "".join(e["content"] for e in events if e["type"] == "delta")
+        assert text == "先做受力分析，再看合力方向"
+        assert events[-1]["type"] == "done"
+
+    async def test_stream_failure_keeps_done_and_hides_internal_error(
+        self, client, mock_graph_service, mock_ai_service, ai_override
+    ):
+        """模型调用抛错时：流必须以 done 收尾，且不能把内部异常原文回传前端。"""
+        mock_graph_service.get_node_detail = AsyncMock(
+            return_value={"id": "node-1", "name": "牛顿第二定律", "summary": "F=ma"}
+        )
+        mock_ai_service.suggest_hint = AsyncMock(
+            side_effect=RuntimeError("upstream 401 sk-live-should-not-leak")
+        )
+
+        response = await client.post(
+            "/api/v1/brainstorm/suggest/stream",
+            json={"book_id": "book-1", "node_id": "node-1", "mode": "hint"},
+        )
+
+        assert response.status_code == 200
+        events = _parse_sse(response.text)
+        assert events[-1]["type"] == "done"
+        assert events[-2]["type"] == "error"
+        assert "sk-live-should-not-leak" not in response.text
+
+    async def test_stream_node_not_found(self, client, mock_graph_service, ai_override):
+        mock_graph_service.get_node_detail = AsyncMock(return_value=None)
+
+        response = await client.post(
+            "/api/v1/brainstorm/suggest/stream",
+            json={"book_id": "book-1", "node_id": "nope", "mode": "hint"},
+        )
+
+        assert response.status_code == 404
+
+    async def test_stream_rejects_generate_mode(
+        self, client, mock_graph_service, ai_override
+    ):
+        """流式接口不支持 generate：必须明确报错，不能静默退回 hint。
+
+        generate 返回的是结构化子树，若被当成 hint 处理，调用方会拿到一串
+        「建议节点名」而不是子树，看起来成功其实是错的。
+        """
+        response = await client.post(
+            "/api/v1/brainstorm/suggest/stream",
+            json={"book_id": "book-1", "node_id": "node-1", "mode": "generate"},
+        )
+
+        assert response.status_code == 400
+        assert "generate" in response.json()["detail"]
+
 
 class TestNormalizeNodeType:
     @pytest.mark.parametrize(

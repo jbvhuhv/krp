@@ -38,6 +38,31 @@ class BrainstormMixin:
             return degraded_result(guidance="")
         return self._parse_json(response, {"guidance": ""})
 
+    async def guide_idea_stream(self, node_name: str, user_idea: str):
+        prompt = prompt_manager.get_brainstorm_guide_stream_prompt(node_name, user_idea)
+        try:
+            async for chunk in self.llm.stream_chat(prompt):
+                text = chunk.strip()
+                if not text or text == "[DONE]":
+                    continue
+                try:
+                    obj = json.loads(text)
+                except json.JSONDecodeError:
+                    continue
+                choices = obj.get("choices") or []
+                if not choices:
+                    continue
+                delta = choices[0].get("delta") or {}
+                content = delta.get("content") or ""
+                if content:
+                    yield content
+        except _ERROR_TYPES as exc:
+            # 不要在这里吞掉：流式接口已经把 200 发出去了，若这里静默结束，
+            # 客户端只会收到一个空的 delta 流，最终显示「暂无建议，换个方向试试」——
+            # 用户以为模型没想法，实际是调用失败，且额度已经花了。交给上层发 error 帧。
+            logger.warning("想法引导流式调用 LLM 失败：%s", exc)
+            raise
+
     async def generate_subtree(self, node_name: str, node_summary: str) -> dict:
         prompt = prompt_manager.get_brainstorm_generate_prompt(node_name, node_summary)
         try:
