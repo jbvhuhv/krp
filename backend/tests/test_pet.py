@@ -1,11 +1,11 @@
 from datetime import datetime, timedelta
 
 import pytest
+from sqlalchemy import select
 
 from app.core.config import settings
 from app.models.pet import Pet
 from app.services import pet_service
-from sqlalchemy import select
 
 
 def test_generate_pet_identity_is_stable_and_varied():
@@ -306,11 +306,15 @@ async def test_feed_requires_fruits(client):
     assert resp.status_code == 400
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    reason="契约漂移：抽取成功后的成长断言基于旧 nodes_count 语义",
-    strict=False,
-)
 async def test_extraction_success_grows_pet_tree(test_engine, tmp_path):
+    """抽取成功后宠物要按「新知识点数」成长。
+
+    两个变化让旧断言失效：
+    1. nodes_count 现在含 1 个书籍根节点（2 知识点 → 3）；
+    2. 成长值不再是线性 nodes×GROWTH_PER_NODE，而是走 growth_from_nodes() 的凹曲线。
+    因此这里既断言「与 3 个节点对应的成长值一致」，也断言「比 2 个节点时更多」，
+    避免用例变成照抄实现的空壳。
+    """
     from unittest.mock import AsyncMock
 
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -344,7 +348,8 @@ async def test_extraction_success_grows_pet_tree(test_engine, tmp_path):
         pet = (
             await session.execute(select(Pet).where(Pet.user_id == "grow-user-2"))
         ).scalar_one()
-        assert pet.tree_growth == pytest.approx(2 * pet_service.GROWTH_PER_NODE)
+        assert pet.tree_growth == pytest.approx(pet_service.growth_from_nodes(3))
+        assert pet.tree_growth > pet_service.growth_from_nodes(2)
         assert pet.name and pet.species
 
 def test_compute_pending_growth_subtracts_consumed():

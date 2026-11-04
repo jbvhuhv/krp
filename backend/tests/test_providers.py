@@ -8,7 +8,6 @@ from app.services.providers.base import (
 )
 
 
-
 def test_network_errors_covered_by_degradation():
     assert isinstance(httpx.ConnectError("boom"), LLM_ERROR_TYPES)
     assert isinstance(httpx.ReadTimeout("timeout"), LLM_ERROR_TYPES)

@@ -163,10 +163,6 @@ class TestCommunityLikeAPI:
 
 
 class TestCommunityForkAPI:
-    @pytest.mark.xfail(
-        reason="契约漂移：fork 返回的 edges_count 未计入普通边（克隆本身正常）",
-        strict=False,
-    )
     async def test_fork_post(self, client, seed_user, graph_snapshot, mock_graph_service):
         create_resp = await client.post("/api/v1/community/posts", json={
             "title": "克隆测试", "description": "", "graph_snapshot": graph_snapshot, "tags": [],
@@ -182,7 +178,8 @@ class TestCommunityForkAPI:
         resp = await client.post(f"/api/v1/community/posts/{post_id}/fork")
         assert resp.status_code == 200
         data = resp.json()
-        assert data["nodes_count"] == 2
+        # 2 个快照节点 + 1 个新建的书籍根节点（克隆结果要挂到一本书下）
+        assert data["nodes_count"] == 3
         assert data["edges_count"] == 1
 
     async def test_fork_increments_clones_count(self, client, seed_user, graph_snapshot, mock_graph_service):

@@ -1,5 +1,6 @@
-import pytest
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from app.services.graph_service import GraphService
 
@@ -258,7 +259,7 @@ class TestGraphAPIGetGraph:
             "nodes": [], "edges": [],
         })
 
-        response = await client.get(f"/api/v1/graph/test-user-0001")
+        response = await client.get("/api/v1/graph/test-user-0001")
 
         assert response.status_code == 200
         assert "nodes" in response.json()

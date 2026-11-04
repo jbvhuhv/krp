@@ -289,7 +289,6 @@ class TestReflectionAPIGetToday:
     async def test_get_today_returns_existing_questions(
         self, client, mock_reflection_service
     ):
-        from datetime import datetime, timezone
         mock_reflection_service.get_today_questions = AsyncMock(return_value=[
             ReflectionRecord(
                 id="q-1",

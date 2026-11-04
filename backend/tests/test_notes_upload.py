@@ -39,8 +39,9 @@ async def test_upload_file_too_large(client, large_file):
     filename, content, mime = large_file
     files = {"file": (filename, io.BytesIO(content), mime)}
     resp = await client.post("/api/v1/notes/upload", files=files)
-    assert resp.status_code == 400
-    assert "超限" in resp.json()["detail"]
+    # 超限改由 upload_guard 分块读取时立即中断，返回 413 而非 400（见 upload_guard 模块注释）
+    assert resp.status_code == 413
+    assert "上限" in resp.json()["detail"]
 
 
 async def test_upload_unsupported_format(client):
