@@ -127,3 +127,76 @@ class TestNotificationAPI:
         response = await client.put("/api/v1/notifications/nonexistent/read")
 
         assert response.status_code == 404
+
+
+class TestCommunityNotificationActor:
+    """互动通知必须能看出「是谁」——原来的「有人」让作者无从回应。"""
+
+    async def _seed(self, test_db):
+        from app.models.community import CommunityPost
+        from app.models.user import User
+
+        test_db.add_all(
+            [
+                User(id="u-author", phone="13800000001", nickname="作者同学"),
+                User(id="u-actor", phone="13800000002", nickname="小明"),
+            ]
+        )
+        post = CommunityPost(
+            id="p-1",
+            user_id="u-author",
+            title="数据结构 · 二叉树",
+            description="",
+            graph_snapshot={"nodes": [], "edges": []},
+        )
+        test_db.add(post)
+        await test_db.commit()
+        return post
+
+    async def test_title_carries_actor_nickname(self, test_db):
+        from sqlalchemy import select
+
+        from app.api.v1.endpoints.community import notify_post_author
+        from app.models.notification import Notification
+
+        post = await self._seed(test_db)
+        await notify_post_author(
+            test_db, post, "u-actor", "like", "赞了你的知识图谱", "赞了你的知识图谱《x》"
+        )
+
+        rows = (await test_db.execute(select(Notification))).scalars().all()
+        assert len(rows) == 1
+        assert rows[0].title == "小明 赞了你的知识图谱"
+        assert rows[0].target_id == "p-1"
+
+    async def test_falls_back_to_masked_phone_without_nickname(self, test_db):
+        from sqlalchemy import select
+
+        from app.api.v1.endpoints.community import notify_post_author
+        from app.models.notification import Notification
+        from app.models.user import User
+
+        post = await self._seed(test_db)
+        test_db.add(User(id="u-anon", phone="13900001234", nickname=None))
+        await test_db.commit()
+
+        await notify_post_author(
+            test_db, post, "u-anon", "comment", "评论了你的知识图谱", "评论了《x》"
+        )
+
+        rows = (await test_db.execute(select(Notification))).scalars().all()
+        assert rows[-1].title.startswith("139****1234 ")
+
+    async def test_self_action_creates_nothing(self, test_db):
+        from sqlalchemy import select
+
+        from app.api.v1.endpoints.community import notify_post_author
+        from app.models.notification import Notification
+
+        post = await self._seed(test_db)
+        await notify_post_author(
+            test_db, post, "u-author", "like", "赞了你的知识图谱", "赞了《x》"
+        )
+
+        rows = (await test_db.execute(select(Notification))).scalars().all()
+        assert rows == []

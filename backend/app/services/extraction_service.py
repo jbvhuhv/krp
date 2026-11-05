@@ -259,6 +259,7 @@ class ExtractionService:
             return {"nodes": [], "edges": [], "status": NOTE_STATUS["EMPTY"]}
 
         book_title = ""
+        subject_override: str | None = None
         if self.session_factory is not None:
             try:
                 from sqlalchemy import select
@@ -267,11 +268,12 @@ class ExtractionService:
 
                 async with self.session_factory() as session:
                     res = await session.execute(
-                        select(Note.title).where(Note.id == note_id)
+                        select(Note.title, Note.subject).where(Note.id == note_id)
                     )
-                    row = res.scalar_one_or_none()
+                    row = res.first()
                     if row:
-                        book_title = row
+                        book_title = row[0] or ""
+                        subject_override = row[1]
             except Exception:  # noqa: BLE001 - 书名只用于展示，失败时回退默认值，但要留痕
                 logger.warning(
                     "读取笔记标题失败，书名回退默认 note_id=%s", note_id, exc_info=True
@@ -280,7 +282,11 @@ class ExtractionService:
         _backfill_edges(result)
 
         await self.graph_service.write_extraction_result(
-            user_id=user_id, note_id=note_id, result=result, book_title=book_title
+            user_id=user_id,
+            note_id=note_id,
+            result=result,
+            book_title=book_title,
+            subject_override=subject_override,
         )
 
         # 向量化放在抽取链路里而不是发布时：发布回填一次最多补 200 个且串行，

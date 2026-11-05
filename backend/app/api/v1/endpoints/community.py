@@ -126,13 +126,19 @@ async def notify_post_author(
     title: str,
     content: str,
 ) -> None:
-    """给帖子作者推送互动通知；自己操作自己不通知，失败不影响主流程。"""
+    """给帖子作者推送互动通知；自己操作自己不通知，失败不影响主流程。
+
+    ``title`` 传入的是不含主语的动作短语（如「评论了你的知识图谱」），
+    这里统一补上互动者的显示名，作者才知道「是谁」——原来的硬编码「有人」
+    让通知完全无法判断该不该回应，也点不出社交线索。
+    """
     if post is None or post.user_id == actor_user_id:
         return
     try:
+        actor = await _build_author(db, actor_user_id)
         await NotificationService(db).create(
             user_id=post.user_id,
-            title=title,
+            title=f"{actor.nickname} {title}"[:255],
             content=content,
             type=notif_type,
             # 让前端能「点通知直接跳到对应帖子」
@@ -644,7 +650,7 @@ async def create_comment(
         post,
         user_id,
         "comment",
-        "有人评论了你的知识图谱",
+        "评论了你的知识图谱",
         f"评论了你的知识图谱《{post.title}》：{content[:60]}",
     )
 
@@ -777,7 +783,7 @@ async def toggle_like(
         post,
         user_id,
         "like",
-        "有人点赞了你的知识图谱",
+        "赞了你的知识图谱",
         f"赞了你的知识图谱《{post.title}》",
     )
     return LikeResponse(liked=True, likes_count=post.likes_count)
@@ -926,7 +932,7 @@ async def fork_post(
             post,
             user_id,
             "fork",
-            "你的知识图谱被克隆了",
+            "克隆了你的知识图谱",
             f"克隆了你的知识图谱《{post.title}》",
         )
 

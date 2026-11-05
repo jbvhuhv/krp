@@ -10,6 +10,40 @@
   align-items: center;
   justify-content: space-between;
   margin-bottom: 24px;
+  gap: 16px;
+}
+
+/* 上传区：学科下拉 + 上传按钮 */
+.upload-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.subject-select {
+  width: 150px;
+}
+
+.subject-select :deep(.el-select__wrapper) {
+  background: rgba(13, 17, 23, 0.75);
+  box-shadow: 0 0 0 1px rgba(148, 163, 184, 0.25) inset;
+}
+
+@media (max-width: 768px) {
+  .page-header-section {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .upload-actions {
+    width: 100%;
+  }
+
+  .subject-select {
+    flex: 1;
+    width: auto;
+  }
 }
 
 .page-title {
@@ -467,6 +501,53 @@
   max-width: 100%;
   color: #cbd5e1;
   font-size: 13.5px;
+}
+
+/* 标题行内编辑：铅笔默认隐藏，悬浮整行时才出现，避免表格视觉噪音 */
+.title-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #7d8590;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+
+.file-name-cell:hover .title-action,
+.title-action:focus-visible {
+  opacity: 1;
+}
+
+.title-action:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #22d3ee;
+}
+
+.title-action.save {
+  color: #3fb950;
+}
+
+.title-action.save:hover {
+  color: #3fb950;
+  background: rgba(63, 185, 80, 0.15);
+}
+
+.title-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.title-input :deep(.el-input__wrapper) {
+  background: rgba(13, 17, 23, 0.9);
+  box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.45) inset;
 }
 
 .file-icon {

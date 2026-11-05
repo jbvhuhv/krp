@@ -20,6 +20,29 @@ const uploading = computed(() => uploadingCount.value > 0)
 
 const acceptTypes = '.md,.markdown,.txt,.pdf,.doc,.docx,.png,.jpg,.jpeg'
 
+// 上传时可指定学科：留空交给模型判断，选了就以用户为准
+const uploadSubject = ref('')
+const SUBJECT_PRESETS = [
+  '计算机',
+  '数学',
+  '电子信息',
+  '机械工程',
+  '材料科学',
+  '经济学',
+  '管理学',
+  '法学',
+  '医学',
+  '外国语言',
+  '文学',
+  '哲学',
+  '艺术学',
+]
+
+// 标题行内编辑：editingId 非空时该行显示输入框
+const editingId = ref('')
+const editingTitle = ref('')
+const savingTitleId = ref('')
+
 const statusMeta = {
   pending: { label: '排队中', color: '#d29922' },
   processing: { label: 'AI 抽取中', color: '#22d3ee' },
@@ -234,7 +257,7 @@ async function handleUpload(options) {
   // uploading 改为计数，避免多文件并发时按钮 loading 互相覆盖。
   uploadingCount.value += 1
   try {
-    const note = await notesApi.upload(options.file)
+    const note = await notesApi.upload(options.file, uploadSubject.value)
     ElMessage.success(`《${options.file.name}》上传成功，AI 正在抽取知识点…`)
     await loadNotes()
     if (note?.id) startPolling(note.id)
@@ -242,6 +265,43 @@ async function handleUpload(options) {
     // 错误已在拦截器中提示
   } finally {
     uploadingCount.value = Math.max(0, uploadingCount.value - 1)
+  }
+}
+
+/** 开始改标题（文件名那一列直接变输入框）。 */
+function startEditTitle(note) {
+  if (!note?.id || savingTitleId.value) return
+  editingId.value = note.id
+  editingTitle.value = note.title || ''
+}
+
+function cancelEditTitle() {
+  editingId.value = ''
+  editingTitle.value = ''
+}
+
+async function saveTitle(note) {
+  const title = (editingTitle.value || '').trim()
+  if (!note?.id) return
+  if (!title) {
+    ElMessage.warning('标题不能为空')
+    return
+  }
+  if (title === note.title) {
+    cancelEditTitle()
+    return
+  }
+  savingTitleId.value = note.id
+  try {
+    const updated = await notesApi.update(note.id, { title })
+    updateNoteInList({ id: note.id, title: updated?.title || title })
+    ElMessage.success('已改名，书架书名同步更新')
+    editingId.value = ''
+    editingTitle.value = ''
+  } catch {
+    // 错误已在拦截器中提示
+  } finally {
+    savingTitleId.value = ''
   }
 }
 
@@ -675,19 +735,38 @@ onBeforeUnmount(() => {
         <h1 class="page-title">笔记管理</h1>
         <p class="page-subtitle">上传学习笔记，系统自动抽取知识点构建图谱</p>
       </div>
-      <el-upload
-        ref="uploadRef"
-        :show-file-list="false"
-        :accept="acceptTypes"
-        :http-request="handleUpload"
-        :disabled="uploading"
-        multiple
-      >
-        <el-button type="primary" :loading="uploading" size="large" round>
-          <el-icon><Upload /></el-icon>
-          {{ uploading ? `正在上传（${uploadingCount}）` : '上传笔记' }}
-        </el-button>
-      </el-upload>
+      <div class="upload-actions">
+        <el-select
+          v-model="uploadSubject"
+          class="subject-select"
+          placeholder="学科（可不选）"
+          clearable
+          filterable
+          allow-create
+          default-first-option
+          size="large"
+        >
+          <el-option
+            v-for="s in SUBJECT_PRESETS"
+            :key="s"
+            :label="s"
+            :value="s"
+          />
+        </el-select>
+        <el-upload
+          ref="uploadRef"
+          :show-file-list="false"
+          :accept="acceptTypes"
+          :http-request="handleUpload"
+          :disabled="uploading"
+          multiple
+        >
+          <el-button type="primary" :loading="uploading" size="large" round>
+            <el-icon><Upload /></el-icon>
+            {{ uploading ? `正在上传（${uploadingCount}）` : '上传笔记' }}
+          </el-button>
+        </el-upload>
+      </div>
     </div>
 
     <el-row :gutter="24" class="stat-row">
@@ -841,14 +920,45 @@ onBeforeUnmount(() => {
               <el-icon class="file-icon" :color="getFormatMeta(row.format).color">
                 <Document />
               </el-icon>
-              <el-tooltip
-                :content="row.title"
-                placement="top"
-                :show-after="150"
-                :disabled="!row.title"
-              >
-                <span class="file-name-text">{{ row.title }}</span>
-              </el-tooltip>
+              <template v-if="editingId === row.id">
+                <el-input
+                  v-model="editingTitle"
+                  size="small"
+                  class="title-input"
+                  maxlength="120"
+                  autofocus
+                  @keyup.enter="saveTitle(row)"
+                  @keyup.esc="cancelEditTitle"
+                />
+                <button
+                  class="title-action save"
+                  :disabled="savingTitleId === row.id"
+                  title="保存"
+                  @click.stop="saveTitle(row)"
+                >
+                  <el-icon><Check /></el-icon>
+                </button>
+                <button class="title-action" title="取消" @click.stop="cancelEditTitle">
+                  <el-icon><Close /></el-icon>
+                </button>
+              </template>
+              <template v-else>
+                <el-tooltip
+                  :content="row.title"
+                  placement="top"
+                  :show-after="150"
+                  :disabled="!row.title"
+                >
+                  <span class="file-name-text">{{ row.title }}</span>
+                </el-tooltip>
+                <button
+                  class="title-action edit"
+                  title="修改标题"
+                  @click.stop="startEditTitle(row)"
+                >
+                  <el-icon><EditPen /></el-icon>
+                </button>
+              </template>
             </div>
           </template>
         </el-table-column>

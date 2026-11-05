@@ -233,3 +233,67 @@ async def test_upload_blank_text_is_rejected_before_extraction(client):
     resp = await client.post("/api/v1/notes/upload", files=files)
     assert resp.status_code == 422
     assert "提取到文字" in resp.json()["detail"]
+
+
+async def test_upload_with_subject_persists(client, small_markdown_file, test_db):
+    """上传时选的学科要落库——否则抽取模型判错就得重传一次。"""
+    from sqlalchemy import select
+
+    from app.models.note import Note
+
+    filename, content, mime = small_markdown_file
+    files = {"file": (filename, io.BytesIO(content), mime)}
+    resp = await client.post(
+        "/api/v1/notes/upload", files=files, data={"subject": "计算机体系结构"}
+    )
+
+    assert resp.status_code == 201
+    assert resp.json()["subject"] == "计算机体系结构"
+    note = (
+        await test_db.execute(select(Note).where(Note.id == resp.json()["id"]))
+    ).scalar_one()
+    assert note.subject == "计算机体系结构"
+
+
+async def test_upload_without_subject_stays_null(client, small_markdown_file):
+    filename, content, mime = small_markdown_file
+    files = {"file": (filename, io.BytesIO(content), mime)}
+    resp = await client.post("/api/v1/notes/upload", files=files)
+
+    assert resp.status_code == 201
+    assert resp.json()["subject"] is None
+
+
+async def test_patch_note_title_syncs_book_name(
+    client, small_markdown_file, mock_graph_service
+):
+    filename, content, mime = small_markdown_file
+    files = {"file": (filename, io.BytesIO(content), mime)}
+    note_id = (await client.post("/api/v1/notes/upload", files=files)).json()["id"]
+
+    resp = await client.patch(
+        f"/api/v1/notes/{note_id}", json={"title": "数据结构 · 期末复习"}
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["title"] == "数据结构 · 期末复习"
+    # 书架里的书名来自图谱书根节点，必须同步改，否则两个页面显示不一致
+    mock_graph_service.update_book_name_by_note.assert_awaited_once()
+    args = mock_graph_service.update_book_name_by_note.await_args
+    assert args[0][1] == note_id
+    assert args[0][2] == "数据结构 · 期末复习"
+
+
+async def test_patch_note_title_rejects_blank(client, small_markdown_file):
+    filename, content, mime = small_markdown_file
+    files = {"file": (filename, io.BytesIO(content), mime)}
+    note_id = (await client.post("/api/v1/notes/upload", files=files)).json()["id"]
+
+    resp = await client.patch(f"/api/v1/notes/{note_id}", json={"title": "   "})
+
+    assert resp.status_code == 400
+
+
+async def test_patch_unknown_note_returns_404(client):
+    resp = await client.patch("/api/v1/notes/not-exist", json={"title": "x"})
+    assert resp.status_code == 404

@@ -8,6 +8,7 @@ from fastapi import (
     BackgroundTasks,
     Depends,
     File,
+    Form,
     HTTPException,
     Query,
     UploadFile,
@@ -29,7 +30,7 @@ from app.core.exceptions import ForbiddenException
 from app.core.logger import get_logger
 from app.core.upload_guard import read_upload_limited
 from app.models.note import Note
-from app.schemas.note import NoteList, NoteOut
+from app.schemas.note import NoteList, NoteOut, NoteUpdate
 from app.services.extraction_service import ExtractionService
 from app.services.ocr_service import OcrError, OcrNotConfiguredError, OcrService
 
@@ -47,6 +48,7 @@ def _to_out(note: Note, include_content: bool = False) -> NoteOut:
         title=note.title,
         format=note.format,
         tags=[t for t in note.tags.split(",") if t] if note.tags else [],
+        subject=note.subject,
         upload_time=note.upload_time,
         task_id=note.task_id,
         content=note.content if include_content else None,
@@ -86,6 +88,7 @@ async def list_notes(
 async def upload_note(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
+    subject: str | None = Form(None),
     user_id: str = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
     extraction_service: ExtractionService = Depends(get_extraction_service),
@@ -188,6 +191,7 @@ async def upload_note(
         title=filename,
         content=text_content,
         format=fmt,
+        subject=(subject or "").strip()[:32] or None,
         file_path=saved_path,
         task_id=task_id,
         status=NOTE_STATUS["PENDING"],
@@ -254,6 +258,53 @@ async def re_extract_note(
         fmt=note.format,
     )
 
+    return _to_out(note)
+
+
+@router.patch("/{note_id}", response_model=NoteOut)
+async def update_note(
+    note_id: str,
+    payload: NoteUpdate,
+    user_id: str = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+    graph_service=Depends(get_graph_service),
+):
+    """改笔记标题/学科。
+
+    标题会同步写到图谱里对应的书根节点——用户看到书名的地方是书架，
+    只改 SQLite 会留下「笔记页叫新名、书架还是旧名」的分裂感。
+    """
+    result = await db.execute(
+        select(Note).where(Note.id == note_id, Note.user_id == user_id)
+    )
+    note = result.scalar_one_or_none()
+    if note is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="笔记不存在"
+        )
+
+    updated = payload.model_dump(exclude_unset=True)
+
+    if "title" in updated:
+        title = (updated.get("title") or "").strip()
+        if not title:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="标题不能为空"
+            )
+        note.title = title[:255]
+        try:
+            await graph_service.update_book_name_by_note(user_id, note_id, note.title)
+        except Exception:  # noqa: BLE001 - 图谱改名失败不该阻塞笔记改名
+            logger.warning(
+                "同步书根节点名失败 note_id=%s", note_id, exc_info=True
+            )
+
+    if "subject" in updated:
+        raw = (updated.get("subject") or "").strip()
+        note.subject = raw[:32] or None
+
+    await db.commit()
+    await db.refresh(note)
     return _to_out(note)
 
 

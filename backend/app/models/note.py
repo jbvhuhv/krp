@@ -17,6 +17,10 @@ class Note(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     format: Mapped[str] = mapped_column(String(32), default="markdown")
     tags: Mapped[str] = mapped_column(Text, default="")
+    # 上传时用户可指定学科；为空则由抽取模型自行判断。
+    # 存在的意义：LLM 认不出的专业课前，用户自己最清楚这份笔记属于哪门课，
+    # 否则知识图谱里会堆出一批「未分类」节点，学科筛选也筛不出来。
+    subject: Mapped[str | None] = mapped_column(String(32), nullable=True)
     file_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
     task_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     upload_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

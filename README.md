@@ -133,7 +133,7 @@ demo1/
 │   │   │       ├── router.py              # 路由聚合（统一前缀 /api/v1）
 │   │   │       └── endpoints/             # 8 个业务域端点
 │   │   │           ├── auth.py            # 认证：发送验证码/登录/me
-│   │   │           ├── notes.py           # 笔记：上传/列表/详情/删除
+│   │   │           ├── notes.py           # 笔记：上传/列表/详情/改名/删除
 │   │   │           ├── graph.py           # 图谱：节点CRUD/边/来源/subject-stats
 │   │   │           ├── reflection.py      # 反思：问题/作答/历史/调度
 │   │   │           ├── avatar.py          # 分身：发布/配置/统计/对话WS
@@ -390,9 +390,10 @@ docker run --rm -p 8000:8000 \
 | POST | `/api/v1/auth/send-code` | 发送短信验证码（限流：60s/次，5次/天） |
 | POST | `/api/v1/auth/login` | 手机号+验证码登录（未注册自动创建），返回 JWT Token |
 | GET | `/api/v1/auth/me` | 获取当前登录用户信息 |
-| POST | `/api/v1/notes/upload` | 上传笔记（含图片，图片经多模态模型 OCR 识别），返回笔记 ID + 任务 ID，异步触发知识抽取 |
+| POST | `/api/v1/notes/upload` | 上传笔记（含图片，图片经多模态模型 OCR 识别），返回笔记 ID + 任务 ID，异步触发知识抽取。可选 `subject` 表单字段指定学科，指定后抽取出的节点全部归入该学科 |
 | GET | `/api/v1/notes` | 当前用户笔记列表 |
 | GET | `/api/v1/notes/{noteId}` | 笔记详情 |
+| PATCH | `/api/v1/notes/{noteId}` | 修改笔记标题/学科；改名会同步更新图谱书根节点名，书架书名保持一致 |
 | DELETE | `/api/v1/notes/{noteId}` | 删除笔记 |
 | POST | `/api/v1/notes/{noteId}/re-extract` | 对抽取失败/为空的笔记重新抽取（重置为 pending） |
 | GET | `/api/v1/graph/books` | 获取知识书列表（书架视图数据源） |

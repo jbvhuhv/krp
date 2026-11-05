@@ -420,10 +420,39 @@ class CrudMixin:
                 nodes.append(dict(record["n"]))
             return nodes
 
+    async def update_book_name_by_note(
+        self, user_id: str, note_id: str, name: str
+    ) -> int:
+        """把某篇笔记对应的书根节点改名（笔记改标题时同步）。返回受影响节点数。"""
+        async with self.driver.session() as session:
+            result = await session.run(
+                f"""
+                MATCH (n:{NODE_LABEL} {{user_id: $user_id, source_note_id: $note_id}})
+                WHERE n.node_type = $book_type
+                SET n.name = $name
+                RETURN count(n) AS c
+                """,
+                user_id=user_id,
+                note_id=note_id,
+                book_type=NODE_TYPE_BOOK,
+                name=name,
+            )
+            record = await result.single()
+            return int(record["c"]) if record else 0
+
     async def write_extraction_result(
-        self, user_id: str, note_id: str, result: dict, book_title: str = ""
+        self,
+        user_id: str,
+        note_id: str,
+        result: dict,
+        book_title: str = "",
+        subject_override: str | None = None,
     ) -> None:
-        subject = (result.get("subject") or "").strip() or None
+        # 用户在「上传笔记」时手动选的学科优先级最高：模型判断经常把公共课
+        # 笼统归成「计算机」之类，本人最清楚这份笔记属于哪门课。
+        subject = (subject_override or "").strip() or (
+            (result.get("subject") or "").strip() or None
+        )
         seq = count()
         book_id = await self.create_node(
             user_id=user_id,

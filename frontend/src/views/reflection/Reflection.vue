@@ -1,8 +1,11 @@
 <script setup>
 import { ref, reactive, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { useRouter } from 'vue-router'
 import echarts from '@/utils/echarts'
 import { ElMessage } from 'element-plus'
 import { reflectionApi, notifyError } from '@/api'
+
+const router = useRouter()
 
 const loading = ref(false)
 const loadError = ref(false)
@@ -566,16 +569,25 @@ onBeforeUnmount(() => {
           </template>
           <template v-else>
             <el-empty :image-size="120" description="" />
-            <p class="empty-text">今日暂无反思，点击获取今日问题或前往知识图谱温习</p>
-            <el-button
-              type="primary"
-              :loading="generating"
-              @click="handleFetchQuestions"
-              class="generate-btn"
-            >
-              <el-icon><MagicStick /></el-icon>
-              获取今日问题
-            </el-button>
+            <p class="empty-text">今日暂无反思</p>
+            <p class="empty-hint">
+              反思问题来自你笔记里的知识点——还没有笔记，就只能先「获取」到一片空白。
+            </p>
+            <div class="empty-actions">
+              <el-button
+                type="primary"
+                :loading="generating"
+                @click="handleFetchQuestions"
+                class="generate-btn"
+              >
+                <el-icon><MagicStick /></el-icon>
+                获取今日问题
+              </el-button>
+              <el-button class="generate-btn ghost" @click="router.push('/notes')">
+                <el-icon><Upload /></el-icon>
+                先上传一篇笔记
+              </el-button>
+            </div>
           </template>
         </div>
       </div>

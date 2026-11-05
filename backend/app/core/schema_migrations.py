@@ -12,6 +12,8 @@ _NOTES_COLUMNS = {
     "edges_count": "INTEGER DEFAULT 0",
     "error_message": "TEXT",
     "processed_time": "TIMESTAMP",
+    # 上传时用户指定的学科（为空则由抽取模型判断）
+    "subject": "VARCHAR(32)",
 }
 
 # 独特宠物身份字段（注册即生成，存量宠物补生成）
