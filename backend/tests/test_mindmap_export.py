@@ -84,6 +84,126 @@ class TestBuildBookForest:
         assert forest[0]["children"][0]["name"] == "A"
 
 
+class TestBookIntro:
+    """每本书的导读句与章节脉络：层级只有两层时，这两行是唯一的骨架线索。"""
+
+    def test_lead_takes_first_sentence(self):
+        nodes = [
+            {
+                "id": "b1",
+                "name": "计算机网络",
+                "node_type": "book",
+                "summary": "介绍分层模型与 TCP/UDP 特性。后半句讲的是细节。",
+            },
+            {"id": "c1", "name": "物理层", "node_type": "category", "parent_id": "b1"},
+        ]
+        book = build_book_forest(nodes)[0]
+        assert book["lead"] == "介绍分层模型与 TCP/UDP 特性"
+
+    def test_lead_keeps_short_summary_without_sentence_end(self):
+        nodes = [
+            {"id": "b1", "name": "书", "node_type": "book", "summary": "机器学习基础知识梳理"},
+        ]
+        assert build_book_forest(nodes)[0]["lead"] == "机器学习基础知识梳理"
+
+    def test_lead_ignores_empty_summary(self):
+        nodes = [{"id": "b1", "name": "书", "node_type": "book"}]
+        assert build_book_forest(nodes)[0]["lead"] == ""
+
+    def test_branches_only_lists_top_categories(self):
+        nodes = [
+            {"id": "b1", "name": "计算机网络", "node_type": "book"},
+            {"id": "c1", "name": "物理层", "node_type": "category", "parent_id": "b1"},
+            {"id": "c2", "name": "网络层", "node_type": "category", "parent_id": "b1"},
+            # 直接挂书根的知识点不算主干分支，它下面没有可展开的层级
+            {"id": "k1", "name": "孤立知识点", "node_type": "knowledge", "parent_id": "b1"},
+            # 二级知识点更不该进脉络行
+            {"id": "k2", "name": "IP 地址", "node_type": "knowledge", "parent_id": "c2"},
+        ]
+        book = build_book_forest(nodes)[0]
+        assert book["branches"] == ["物理层", "网络层"]
+
+    async def test_lead_and_branches_rendered_under_book_title(
+        self, client, mock_graph_service
+    ):
+        nodes = _nodes()
+        nodes[0]["summary"] = "介绍分层模型与 TCP/UDP 特性。细节略。"
+        mock_graph_service.get_all_nodes.return_value = nodes
+
+        response = await client.get("/api/v1/graph/export/mindmap")
+        texts = _texts(response.content)
+
+        assert "介绍分层模型与 TCP/UDP 特性" in texts
+        assert any(t.startswith("脉络") and "物理层" in t and "网络层" in t for t in texts)
+
+    async def test_branch_line_collapses_when_too_many(self, client, mock_graph_service):
+        nodes = [{"id": "b1", "name": "大书", "node_type": "book"}]
+        for index in range(8):
+            nodes.append(
+                {
+                    "id": f"c{index}",
+                    "name": f"分支{index}",
+                    "node_type": "category",
+                    "parent_id": "b1",
+                }
+            )
+        mock_graph_service.get_all_nodes.return_value = nodes
+
+        response = await client.get("/api/v1/graph/export/mindmap")
+        branch_line = next(t for t in _texts(response.content) if t.startswith("脉络"))
+
+        assert "等 8 个分支" in branch_line
+        assert "分支7" not in branch_line
+
+
+class TestOverviewPage:
+    def _three_books(self) -> list[dict]:
+        nodes = _nodes()
+        nodes.append({"id": "book-3", "name": "数据库原理", "node_type": "book"})
+        nodes.append(
+            {"id": "c-3", "name": "事务", "node_type": "category", "parent_id": "book-3"}
+        )
+        return nodes
+
+    async def test_overview_table_appears_for_many_books(self, client, mock_graph_service):
+        mock_graph_service.get_all_nodes.return_value = self._three_books()
+
+        response = await client.get("/api/v1/graph/export/mindmap")
+        document = Document(io.BytesIO(response.content))
+
+        assert "书架全景" in [p.text for p in document.paragraphs]
+        assert len(document.tables) == 1
+        header = [cell.text for cell in document.tables[0].rows[0].cells]
+        assert header == ["知识书", "知识点", "主干分支"]
+
+        rows = [[cell.text for cell in row.cells] for row in document.tables[0].rows[1:]]
+        assert len(rows) == 3
+        database = next(r for r in rows if r[0] == "数据库原理")
+        assert database[1] == "1"
+        assert database[2] == "事务"
+
+    async def test_overview_skipped_for_one_or_two_books(self, client, mock_graph_service):
+        mock_graph_service.get_all_nodes.return_value = _nodes()
+
+        response = await client.get("/api/v1/graph/export/mindmap")
+        document = Document(io.BytesIO(response.content))
+
+        assert "书架全景" not in [p.text for p in document.paragraphs]
+        assert document.tables == []
+
+    async def test_overview_reflects_selected_books(self, client, mock_graph_service):
+        mock_graph_service.get_all_nodes.return_value = self._three_books()
+
+        response = await client.get(
+            "/api/v1/graph/export/mindmap",
+            params=[("book_ids", "book-1"), ("book_ids", "book-3")],
+        )
+        document = Document(io.BytesIO(response.content))
+
+        # 只选两本 → 不到概览门槛，正文直接开始
+        assert document.tables == []
+
+
 class TestExportMindmapEndpoint:
     async def test_returns_docx_with_tree(self, client, mock_graph_service):
         mock_graph_service.get_all_nodes.return_value = _nodes()

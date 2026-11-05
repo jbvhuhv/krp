@@ -38,11 +38,20 @@ COLOR_LINE = RGBColor(0xCB, 0xD5, 0xE1)
 
 # 摘要截断长度：思维导图要一眼扫完，长段落会把层级结构埋掉
 SUMMARY_LIMIT = 80
+# 导读句更短：它是每本书的"一句话主题"，长了会和下面的脉络行抢注意力
+LEAD_LIMIT = 64
+# 概览页只在书目够多时才有意义，一两本直接进正文
+OVERVIEW_MIN_BOOKS = 3
+# 脉络行最多列几个分支，再多就概括成"等 N 个分支"
+MAX_BRANCHES = 6
 
 _CHILD_TYPES = (NODE_TYPE_CATEGORY, NODE_TYPE_KNOWLEDGE)
 
+# 中英文句末都算断句；"." 后面必须跟空白或结尾，免得切开 3.5 / v1.2
+_SENTENCE_END = re.compile(r"[。！？；!?;]|\.(?=\s|$)")
 
-def _plain(text: str | None) -> str:
+
+def _plain(text: str | None, limit: int = SUMMARY_LIMIT) -> str:
     """把 Markdown 摘要压成纯文本，避免 Word 里出现 * 和 # 之类的噪音。"""
     if not text:
         return ""
@@ -54,8 +63,27 @@ def _plain(text: str | None) -> str:
     s = re.sub(r"^\s{0,3}[>\-\*\+]\s+", "", s, flags=re.M)
     s = s.replace("**", "").replace("__", "")
     s = re.sub(r"\s+", " ", s).strip()
-    if len(s) > SUMMARY_LIMIT:
-        s = s[:SUMMARY_LIMIT].rstrip("，。、；：,.;:") + "…"
+    if len(s) > limit:
+        s = s[:limit].rstrip("，。、；：,.;:") + "…"
+    return s
+
+
+def _first_sentence(text: str | None, limit: int = LEAD_LIMIT) -> str:
+    """取首句当导读。
+
+    整段摘要铺在书名下面会把"这本书讲什么"埋掉；首句通常就是主题陈述，
+    后面跟着的细节属于知识点层级该管的事。
+    """
+    s = (text or "").strip()
+    if not s:
+        return ""
+    match = _SENTENCE_END.search(s)
+    # 太靠前的断句多半不是真句末（"约 3."），宁可整段截断
+    if match and match.start() >= 6:
+        s = s[: match.start()]
+    s = s.strip("，,、：:　 ")
+    if len(s) > limit:
+        s = s[:limit].rstrip("，,、；;：:（(【[") + "…"
     return s
 
 
@@ -93,7 +121,9 @@ def _node_children(node_id: str, by_parent: dict[str, list[dict]], seen: set[str
         children.append(
             {
                 "name": (child.get("name") or "未命名").strip(),
-                "summary": _plain(child.get("summary")),
+                # 摘要只留首句：一段 80 字小字排在节点下面会把树形脉络压垮，
+                # 首句通常就是这条知识点的定义
+                "summary": _first_sentence(_plain(child.get("summary"), limit=120)),
                 "node_type": child.get("node_type") or NODE_TYPE_KNOWLEDGE,
                 "children": _node_children(cid, by_parent, seen),
             }
@@ -151,6 +181,12 @@ def build_book_forest(
                 "id": bid,
                 "name": (book.get("name") or "未命名知识书").strip(),
                 "summary": _plain(book.get("summary")),
+                # 导读：一句话说清这本书在讲什么，取自书摘要的首句
+                "lead": _first_sentence(_plain(book.get("summary"), limit=140)),
+                # 主干分支：书下的一级分类，用来画「章节脉络」那一行
+                "branches": [
+                    c["name"] for c in roots if c["node_type"] == NODE_TYPE_CATEGORY
+                ],
                 "node_count": _count_nodes(roots),
                 "children": roots,
             }
@@ -159,6 +195,110 @@ def build_book_forest(
     if wanted and not forest:
         return None
     return forest
+
+
+def _shade(cell, fill: str):
+    """给表头铺浅底色：Word 默认没有斑马纹，全靠黑网格线看着太重。"""
+    tc_pr = cell._tc.get_or_add_tcPr()
+    shd = OxmlElement("w:shd")
+    shd.set(qn("w:val"), "clear")
+    shd.set(qn("w:fill"), fill)
+    tc_pr.append(shd)
+
+
+def _fill_cell(cell, text: str, size: float, *, bold=False, color=None, align=None):
+    paragraph = cell.paragraphs[0]
+    paragraph.paragraph_format.space_before = Pt(2)
+    paragraph.paragraph_format.space_after = Pt(2)
+    if align is not None:
+        paragraph.alignment = align
+    run = paragraph.add_run(text)
+    _set_run_font(run, size, bold=bold, color=color)
+
+
+def _write_overview(doc, books: list[dict]):
+    """书架全景：先给一张书目表，翻开来就知道这份文档装了什么、各占多少分量。"""
+    title = doc.add_paragraph()
+    title.paragraph_format.space_before = Pt(18)
+    title.paragraph_format.space_after = Pt(7)
+    title_run = title.add_run("书架全景")
+    _set_run_font(title_run, 13, bold=True, color=COLOR_TITLE)
+
+    table = doc.add_table(rows=1, cols=3)
+    table.style = "Table Grid"
+    table.autofit = False
+    widths = (Cm(6.4), Cm(2.4), Cm(7.0))
+    headers = ("知识书", "知识点", "主干分支")
+    for index, text in enumerate(headers):
+        cell = table.rows[0].cells[index]
+        cell.width = widths[index]
+        _fill_cell(
+            cell,
+            text,
+            9.5,
+            bold=True,
+            color=COLOR_BOOK,
+            align=WD_ALIGN_PARAGRAPH.CENTER if index == 1 else None,
+        )
+        _shade(cell, "EEF3FA")
+
+    for book in books:
+        row = table.add_row()
+        values = (
+            book["name"],
+            str(book["node_count"]),
+            "、".join(book["branches"][:4]) or "—",
+        )
+        for index, text in enumerate(values):
+            cell = row.cells[index]
+            cell.width = widths[index]
+            _fill_cell(
+                cell,
+                text,
+                9.5,
+                color=COLOR_MUTED if index == 1 else COLOR_BODY,
+                align=WD_ALIGN_PARAGRAPH.CENTER if index == 1 else None,
+            )
+
+
+def _write_book_intro(doc, book: dict):
+    """书名下的一句话导读 + 章节脉络行。
+
+    真实数据只有「分类 → 知识点」两层，光看目录看不出主线在哪；
+    这两行先把一本书的骨架摆出来，后面的树才是展开细节。
+    """
+    if book["lead"]:
+        lead = doc.add_paragraph()
+        lead.paragraph_format.left_indent = Cm(0.34)
+        lead.paragraph_format.space_before = Pt(2)
+        lead.paragraph_format.space_after = Pt(0)
+        lead.paragraph_format.line_spacing = 1.2
+        lead.paragraph_format.keep_with_next = True
+        lead_run = lead.add_run(book["lead"])
+        _set_run_font(lead_run, 9.5, color=COLOR_BODY)
+
+    branches = book["branches"]
+    if not branches:
+        return
+
+    line = doc.add_paragraph()
+    line.paragraph_format.left_indent = Cm(0.34)
+    line.paragraph_format.space_before = Pt(3)
+    line.paragraph_format.space_after = Pt(3)
+    line.paragraph_format.line_spacing = 1.2
+    line.paragraph_format.keep_with_next = True
+
+    label = line.add_run("脉络　")
+    _set_run_font(label, 8.5, bold=True, color=COLOR_ACCENT)
+    for index, name in enumerate(branches[:MAX_BRANCHES]):
+        if index:
+            sep = line.add_run(" ▸ ")
+            _set_run_font(sep, 9, color=COLOR_LINE)
+        branch_run = line.add_run(name)
+        _set_run_font(branch_run, 9, color=COLOR_BODY)
+    if len(branches) > MAX_BRANCHES:
+        tail = line.add_run(f" 等 {len(branches)} 个分支")
+        _set_run_font(tail, 8.5, color=COLOR_MUTED)
 
 
 def _write_children(doc, children: list[dict], depth: int, prefix: str = ""):
@@ -255,9 +395,19 @@ def render_docx(*, books: list[dict], owner_label: str, generated_at: date) -> b
         tip_run = tip.add_run("去「笔记」上传一篇 Markdown 笔记，系统会自动生成知识书，这里就能导出思维导图了。")
         _set_run_font(tip_run, 10, color=COLOR_MUTED)
     else:
+        has_overview = total_books >= OVERVIEW_MIN_BOOKS
+        if has_overview:
+            _write_overview(doc, books)
+
         for book_index, book in enumerate(books):
             heading = doc.add_paragraph(style="Heading 1")
-            heading.paragraph_format.space_before = Pt(6 if book_index == 0 else 22)
+            if book_index == 0:
+                # 概览独占一页：13 本书的表格和正文挤在一起，第一本书的结构会被压没
+                heading.paragraph_format.page_break_before = has_overview
+                # 概览页已经分过页，正文第一行不用再留上边距
+                heading.paragraph_format.space_before = Pt(0 if has_overview else 6)
+            else:
+                heading.paragraph_format.space_before = Pt(22)
             heading.paragraph_format.space_after = Pt(0)
             heading.paragraph_format.line_spacing = 1.25
             heading.paragraph_format.keep_with_next = True
@@ -277,6 +427,7 @@ def render_docx(*, books: list[dict], owner_label: str, generated_at: date) -> b
                 _set_run_font(empty_run, 10, color=COLOR_MUTED)
                 continue
 
+            _write_book_intro(doc, book)
             _write_children(doc, book["children"], 1)
 
     footer = section.footer.paragraphs[0]
