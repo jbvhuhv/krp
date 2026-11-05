@@ -8,7 +8,6 @@ const route = useRoute()
 const router = useRouter()
 const userStore = useUserStore()
 
-const FETCH_SIZE = 60
 const PAGE_SIZE = 12
 
 const keyword = ref('')
@@ -17,25 +16,15 @@ const sortBy = ref('newest')
 const page = ref(1)
 const loading = ref(false)
 const allPosts = ref([])
+/** 服务端返回的总数：搜索/标签过滤都在后端完成，前端不再本地切片 */
+const serverTotal = ref(0)
 
 const hotTags = ['考研', 'Python', '职场技能', '高等数学', '机器学习', '英语']
 
-const matchedPosts = computed(() => {
-  const q = keyword.value.trim().toLowerCase()
-  if (!q) return allPosts.value
-  return allPosts.value.filter(
-    (p) =>
-      (p.title || '').toLowerCase().includes(q) ||
-      (p.description || '').toLowerCase().includes(q),
-  )
-})
+// 关键词与标签已由服务端过滤，本地不再二次筛选（否则会把服务端分页的当前页再切一刀）
+const pagedPosts = computed(() => allPosts.value)
 
-const pagedPosts = computed(() => {
-  const start = (page.value - 1) * PAGE_SIZE
-  return matchedPosts.value.slice(start, start + PAGE_SIZE)
-})
-
-const total = computed(() => matchedPosts.value.length)
+const total = computed(() => serverTotal.value)
 
 function escapeHtml(str) {
   return String(str)
@@ -105,14 +94,19 @@ async function loadResults() {
   const seq = ++loadSeq
   loading.value = true
   try {
-    const params = { page: 1, size: FETCH_SIZE, sort: sortBy.value }
+    const params = { page: page.value, size: PAGE_SIZE, sort: sortBy.value }
     if (selectedTag.value) params.tag = selectedTag.value
+    // 关键词必须交给后端：之前只取了首页 60 条再在本地过滤，
+    // 结果就是「站内搜不到明明存在的图谱」。
+    if (keyword.value.trim()) params.q = keyword.value.trim()
     const data = await communityApi.listPosts(params)
     if (seq !== loadSeq) return
     allPosts.value = data?.items ?? []
+    serverTotal.value = data?.total ?? 0
   } catch {
     if (seq !== loadSeq) return
     allPosts.value = []
+    serverTotal.value = 0
   } finally {
     if (seq === loadSeq) loading.value = false
   }
@@ -193,6 +187,13 @@ watch(
     loadResults()
   },
 )
+
+// 服务端分页：翻页需要重新请求，不能再用本地 slice
+watch(page, (next, prev) => {
+  if (route.path !== '/community/search') return
+  if (next === prev) return
+  loadResults()
+})
 </script>
 
 <template>

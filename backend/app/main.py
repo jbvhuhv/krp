@@ -52,13 +52,15 @@ async def lifespan(app: FastAPI):
     from app.core.database import neo4j_driver
     from app.core.demo_bootstrap import bootstrap_neo4j, bootstrap_sqlite
     from app.core.schema_migrations import ensure_schema
-    from app.services.graph import init_vector_index
+    from app.services.graph import init_property_indexes, init_vector_index
     from app.services.note_recovery import recover_stale_notes
 
     # 必须在建表之前：空库时灌入演示数据（已存在数据则不做任何改动）
     bootstrap_sqlite()
     await ensure_schema()
     await init_vector_index(neo4j_driver)
+    # 属性索引：图谱查询几乎都按 (user_id, node_type) 过滤，缺索引时是全标签扫描
+    await init_property_indexes(neo4j_driver)
     # 图谱为空时导入演示图谱（首次部署 / 本地首次运行即可看到完整知识图谱）
     await bootstrap_neo4j(neo4j_driver)
     # 探测 Neo4j 可用性：不可用时图谱退回「内置只读演示图谱」，避免整页空白

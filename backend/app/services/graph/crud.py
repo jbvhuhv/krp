@@ -334,6 +334,21 @@ class CrudMixin:
             record = await result.single()
             return record["deleted"] if record else 0
 
+    async def delete_by_note_id(self, user_id: str, note_id: str) -> int:
+        """按 source_note_id 批量删除该笔记产生的所有图谱节点（含 book 根、目录、知识点）。"""
+        async with self.driver.session() as session:
+            result = await session.run(
+                f"""
+                MATCH (n:{NODE_LABEL} {{user_id: $user_id, source_note_id: $note_id}})
+                DETACH DELETE n
+                RETURN count(n) AS deleted
+                """,
+                user_id=user_id,
+                note_id=note_id,
+            )
+            record = await result.single()
+            return record["deleted"] if record else 0
+
     async def update_mastery(
         self, user_id: str, node_id: str, mastery: float
     ) -> dict | None:

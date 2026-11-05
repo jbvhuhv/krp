@@ -96,7 +96,7 @@ class TestReflectionServiceGetTodayQuestions:
         assert len(questions) == 1
         assert questions[0].question == "什么是牛顿第二定律？"
 
-    async def test_get_today_questions_excludes_answered(
+    async def test_get_today_questions_includes_answered(
         self, reflection_service, test_db
     ):
         record = ReflectionRecord(
@@ -110,7 +110,8 @@ class TestReflectionServiceGetTodayQuestions:
 
         questions = await reflection_service.get_today_questions("user-1")
 
-        assert len(questions) == 0
+        assert len(questions) == 1
+        assert questions[0].answer is not None
 
 
 def test_compute_mastery_weights_time_and_difficulty():
@@ -306,16 +307,45 @@ class TestReflectionAPIGetToday:
         assert len(body) == 1
         assert body[0]["question"] == "什么是牛顿第二定律？"
 
-    async def test_get_today_generates_when_empty(
+    async def test_get_today_does_not_generate_when_empty(
+        self, client, mock_reflection_service
+    ):
+        mock_reflection_service.get_today_questions = AsyncMock(return_value=[])
+
+        response = await client.get("/api/v1/reflection/today")
+
+        assert response.status_code == 200
+        mock_reflection_service.generate_questions.assert_not_called()
+
+    async def test_generate_today_generates_when_empty(
         self, client, mock_reflection_service
     ):
         mock_reflection_service.get_today_questions = AsyncMock(return_value=[])
         mock_reflection_service.generate_questions = AsyncMock(return_value=[])
 
-        response = await client.get("/api/v1/reflection/today")
+        response = await client.post("/api/v1/reflection/today/generate")
 
         assert response.status_code == 200
         mock_reflection_service.generate_questions.assert_called_once()
+
+    async def test_generate_today_skips_when_existing(
+        self, client, mock_reflection_service
+    ):
+        mock_reflection_service.get_today_questions = AsyncMock(return_value=[
+            ReflectionRecord(
+                id="q-1",
+                user_id="test-user-0001",
+                question="已有题",
+                target_node_id="node-1",
+                node_name="牛顿第二定律",
+            ),
+        ])
+        mock_reflection_service.generate_questions = AsyncMock(return_value=[])
+
+        response = await client.post("/api/v1/reflection/today/generate")
+
+        assert response.status_code == 200
+        mock_reflection_service.generate_questions.assert_not_called()
 
 
 class TestReflectionAPISubmitAnswer:

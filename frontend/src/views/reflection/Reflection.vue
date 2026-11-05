@@ -113,7 +113,7 @@ async function loadTodayQuestions() {
 async function handleFetchQuestions() {
   generating.value = true
   try {
-    questions.value = await reflectionApi.getTodayQuestions()
+    questions.value = await reflectionApi.generateTodayQuestions()
     if (!questions.value.length) {
       ElMessage.info('暂无需要复习的知识点，请先上传笔记或前往知识图谱温习')
     } else {
@@ -262,6 +262,69 @@ function toggleExpand(id) {
   expandedItems[id] = !expandedItems[id]
 }
 
+// ===== 提醒设置 =====
+const scheduleDialogVisible = ref(false)
+const scheduleLoading = ref(false)
+const scheduleSaving = ref(false)
+const scheduleFrequency = ref('daily')
+const scheduleStart = ref(new Date())
+const scheduleEnd = ref(new Date())
+
+const FREQUENCY_OPTIONS = [
+  { value: 'daily', label: '每天' },
+  { value: 'workdays', label: '工作日（周一至周五）' },
+  { value: 'weekly', label: '每周' },
+]
+
+function parseTimeWindow(tw) {
+  const [s, e] = (tw || '20:00-21:00').split('-')
+  const [sh, sm] = (s || '20:00').split(':').map(Number)
+  const [eh, em] = (e || '21:00').split(':').map(Number)
+  const sd = new Date(); sd.setHours(sh, sm, 0, 0)
+  const ed = new Date(); ed.setHours(eh, em, 0, 0)
+  return [sd, ed]
+}
+
+function formatTimeWindow() {
+  const fmt = (d) => `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  return `${fmt(scheduleStart.value)}-${fmt(scheduleEnd.value)}`
+}
+
+async function openScheduleDialog() {
+  scheduleDialogVisible.value = true
+  scheduleLoading.value = true
+  try {
+    const data = await reflectionApi.getSchedule()
+    scheduleFrequency.value = data.frequency || 'daily'
+    const [s, e] = parseTimeWindow(data.time_window)
+    scheduleStart.value = s
+    scheduleEnd.value = e
+  } catch {
+    const [s, e] = parseTimeWindow('20:00-21:00')
+    scheduleFrequency.value = 'daily'
+    scheduleStart.value = s
+    scheduleEnd.value = e
+  } finally {
+    scheduleLoading.value = false
+  }
+}
+
+async function saveSchedule() {
+  scheduleSaving.value = true
+  try {
+    await reflectionApi.updateSchedule({
+      frequency: scheduleFrequency.value,
+      time_window: formatTimeWindow(),
+    })
+    ElMessage.success('提醒设置已保存')
+    scheduleDialogVisible.value = false
+  } catch {
+    notifyError('保存失败，请稍后重试')
+  } finally {
+    scheduleSaving.value = false
+  }
+}
+
 
 function formatDate(time) {
   if (!time) return ''
@@ -307,16 +370,27 @@ onBeforeUnmount(() => {
           <span class="title-accent"></span>
           <h2 class="section-title">今日反思</h2>
         </div>
-        <el-button
-          size="small"
-          plain
-          :loading="loading"
-          @click="loadTodayQuestions"
-          class="refresh-btn"
-        >
-          <el-icon><Refresh /></el-icon>
-          刷新问题
-        </el-button>
+        <div class="header-actions">
+          <el-button
+            size="small"
+            plain
+            @click="openScheduleDialog"
+            class="schedule-btn"
+          >
+            <el-icon><AlarmClock /></el-icon>
+            提醒设置
+          </el-button>
+          <el-button
+            size="small"
+            plain
+            :loading="loading"
+            @click="loadTodayQuestions"
+            class="refresh-btn"
+          >
+            <el-icon><Refresh /></el-icon>
+            刷新问题
+          </el-button>
+        </div>
       </div>
 
       <div class="today-card">
@@ -325,11 +399,15 @@ onBeforeUnmount(() => {
             v-for="(q, idx) in questions"
             :key="q.id"
             class="question-item"
+            :class="{ 'is-answered': q.answered }"
           >
             <div class="question-head">
               <span class="q-badge">第 {{ idx + 1 }} 题</span>
               <el-tag v-if="q.node_name" size="small" effect="plain" class="q-tag">
                 {{ q.node_name }}
+              </el-tag>
+              <el-tag v-if="q.answered" size="small" type="success" class="q-tag">
+                已作答
               </el-tag>
             </div>
             <p class="question-text">{{ q.question }}</p>
@@ -338,6 +416,7 @@ onBeforeUnmount(() => {
               v-model="answers[q.id]"
               type="textarea"
               :rows="4"
+              :disabled="q.answered"
               placeholder="在此输入你的理解和思考..."
               class="answer-input"
             />
@@ -345,6 +424,7 @@ onBeforeUnmount(() => {
               <el-button
                 size="small"
                 :type="voiceRecording === q.id ? 'danger' : 'default'"
+                :disabled="q.answered"
                 @click="handleVoice(q.id)"
               >
                 <el-icon><Microphone /></el-icon>
@@ -354,6 +434,7 @@ onBeforeUnmount(() => {
                 size="small"
                 type="primary"
                 :loading="submittingId === q.id"
+                :disabled="q.answered"
                 @click="handleSubmit(q.id)"
               >
                 提交答案
@@ -514,6 +595,54 @@ onBeforeUnmount(() => {
         />
       </div>
     </section>
+
+    <!-- ===== 提醒设置弹窗 ===== -->
+    <el-dialog
+      v-model="scheduleDialogVisible"
+      title="反思提醒设置"
+      width="440px"
+      class="schedule-dialog"
+      :close-on-click-modal="false"
+    >
+      <div v-loading="scheduleLoading" class="schedule-form">
+        <div class="schedule-row">
+          <label class="schedule-label">提醒频率</label>
+          <el-select v-model="scheduleFrequency" class="schedule-select">
+            <el-option
+              v-for="opt in FREQUENCY_OPTIONS"
+              :key="opt.value"
+              :label="opt.label"
+              :value="opt.value"
+            />
+          </el-select>
+        </div>
+        <div class="schedule-row">
+          <label class="schedule-label">提醒时段</label>
+          <div class="time-window-pickers">
+            <el-time-picker
+              v-model="scheduleStart"
+              format="HH:mm"
+              :clearable="false"
+              class="time-picker"
+            />
+            <span class="time-sep">至</span>
+            <el-time-picker
+              v-model="scheduleEnd"
+              format="HH:mm"
+              :clearable="false"
+              class="time-picker"
+            />
+          </div>
+        </div>
+        <p class="schedule-hint">系统会在所选时段内，按频率自动为你生成反思问题。</p>
+      </div>
+      <template #footer>
+        <el-button @click="scheduleDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="scheduleSaving" @click="saveSchedule">
+          保存
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 

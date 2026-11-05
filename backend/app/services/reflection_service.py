@@ -1,10 +1,13 @@
 import asyncio
+import json
+import re
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func as sql_func
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.logger import get_logger
 from app.models.reflection import ReflectionRecord, ReflectionSchedule
 from app.services.ai_service import AIService
@@ -13,10 +16,54 @@ from app.services.providers.base import AI_BUSY_MESSAGE
 
 logger = get_logger(__name__)
 
+
+def _to_score(value, default: float = 0.0) -> float:
+    """把 AI 返回的评分安全转成 float：85→85.0, '85分'→85.0, None→0.0, '优'→0.0"""
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        m = re.search(r"\d+(?:\.\d+)?", str(value))
+        return float(m.group()) if m else default
+
+
+def _dump_list(value) -> str | None:
+    """把评分返回的列表存成 JSON 字符串；空值存 NULL，避免库里出现 "[]" 噪声。"""
+    if not value:
+        return None
+    if isinstance(value, str):
+        value = [value]
+    return json.dumps(list(value), ensure_ascii=False)
+
+
+def _load_list(value) -> list[str]:
+    """读取弱项/资源：兼容历史数据里可能是纯文本或非法 JSON 的情况。"""
+    if not value:
+        return []
+    try:
+        parsed = json.loads(value)
+    except (json.JSONDecodeError, TypeError):
+        return [value]
+    if isinstance(parsed, list):
+        return [str(item) for item in parsed]
+    return [str(parsed)]
+
+
+def _local_day_bounds() -> tuple[datetime, datetime]:
+    """按 settings.TIMEZONE_OFFSET_HOURS 切本地日界，返回 [今日0点, 明日0点) 的 naive UTC datetime。"""
+    now_utc = datetime.now(timezone.utc)
+    local_now = now_utc + timedelta(hours=settings.TIMEZONE_OFFSET_HOURS)
+    local_today_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+    local_tomorrow_start = local_today_start + timedelta(days=1)
+    return local_today_start - timedelta(hours=settings.TIMEZONE_OFFSET_HOURS), local_tomorrow_start - timedelta(hours=settings.TIMEZONE_OFFSET_HOURS)
+
 # 同一题目的并发提交串行化：SQLite 不支持 SELECT ... FOR UPDATE（见下方注释），
 # 单进程部署下用进程内锁兜底，避免同一份答案被评估多次、拿到多个不同分数。
 _ANSWER_LOCKS: dict[str, asyncio.Lock] = {}
 _ANSWER_LOCKS_MAX = 512
+_GENERATE_LOCKS: dict[str, asyncio.Lock] = {}
+_GENERATE_LOCKS_MAX = 256
 
 
 def _answer_lock(user_id: str, question_id: str) -> asyncio.Lock:
@@ -28,6 +75,17 @@ def _answer_lock(user_id: str, question_id: str) -> asyncio.Lock:
                 _ANSWER_LOCKS.pop(stale_key, None)
         lock = asyncio.Lock()
         _ANSWER_LOCKS[key] = lock
+    return lock
+
+
+def _generate_lock(user_id: str) -> asyncio.Lock:
+    lock = _GENERATE_LOCKS.get(user_id)
+    if lock is None:
+        if len(_GENERATE_LOCKS) >= _GENERATE_LOCKS_MAX:
+            for stale_key in [k for k, v in _GENERATE_LOCKS.items() if not v.locked()]:
+                _GENERATE_LOCKS.pop(stale_key, None)
+        lock = asyncio.Lock()
+        _GENERATE_LOCKS[user_id] = lock
     return lock
 
 
@@ -99,12 +157,30 @@ class ReflectionService:
     async def generate_questions(
         self, user_id: str, max_questions: int = MAX_QUESTIONS
     ) -> list[ReflectionRecord]:
+        today_start, tomorrow_start = _local_day_bounds()
+
+        already_today = await self.db.execute(
+            select(ReflectionRecord.target_node_id).where(
+                ReflectionRecord.user_id == user_id,
+                ReflectionRecord.created_at >= today_start,
+                ReflectionRecord.created_at < tomorrow_start,
+            )
+        )
+        asked_rows = already_today.all()
+        asked_node_ids = {row[0] for row in asked_rows if row[0] is not None}
+        if len(asked_rows) >= settings.REFLECTION_DAILY_LIMIT:
+            return []
+
+        remaining = settings.REFLECTION_DAILY_LIMIT - len(asked_rows)
+        max_questions = min(max_questions, remaining)
+
         nodes = await self.graph_service.get_nodes_for_review(
             user_id=user_id,
             mastery_threshold=MASTERY_THRESHOLD,
             days_threshold=DAYS_THRESHOLD,
-            limit=max_questions,
+            limit=max_questions * 3,
         )
+        nodes = [n for n in nodes if n.get("id") not in asked_node_ids][:max_questions]
 
         records = []
         for node in nodes:
@@ -137,10 +213,7 @@ class ReflectionService:
         return records
 
     async def get_today_questions(self, user_id: str) -> list[ReflectionRecord]:
-        today_start = datetime.now(timezone.utc).replace(
-            tzinfo=None, hour=0, minute=0, second=0, microsecond=0
-        )
-        tomorrow_start = today_start + timedelta(days=1)
+        today_start, tomorrow_start = _local_day_bounds()
 
         result = await self.db.execute(
             select(ReflectionRecord)
@@ -148,7 +221,6 @@ class ReflectionService:
                 ReflectionRecord.user_id == user_id,
                 ReflectionRecord.created_at >= today_start,
                 ReflectionRecord.created_at < tomorrow_start,
-                ReflectionRecord.answer.is_(None),
             )
             .order_by(ReflectionRecord.created_at.desc(), ReflectionRecord.id.desc())
         )
@@ -185,14 +257,17 @@ class ReflectionService:
             return None
 
         if record.answer is not None:
+            # 已作答：返回上次的评分明细（含当初的薄弱点与资源），
+            # 之前这里恒返回空数组，导致用户重开同一道题只剩一个分数。
             return {
                 "mastery_score": record.mastery_score or 0.0,
                 "concept_accuracy": record.concept_accuracy or 0.0,
                 "logic_completeness": record.logic_completeness or 0.0,
                 "example_reasonableness": record.example_reasonableness or 0.0,
-                "weak_points": [],
+                "weak_points": _load_list(record.weak_points),
                 "suggestion": record.feedback or "",
-                "resources": [],
+                "resources": _load_list(record.resources),
+                "already_answered": True,
             }
 
         evaluation = await self.ai_service.evaluate_answer(
@@ -206,9 +281,9 @@ class ReflectionService:
                 "message": evaluation.get("message") or AI_BUSY_MESSAGE,
             }
 
-        concept = float(evaluation.get("concept_accuracy", 0.0))
-        logic = float(evaluation.get("logic_completeness", 0.0))
-        example = float(evaluation.get("example_reasonableness", 0.0))
+        concept = _to_score(evaluation.get("concept_accuracy", 0.0))
+        logic = _to_score(evaluation.get("logic_completeness", 0.0))
+        example = _to_score(evaluation.get("example_reasonableness", 0.0))
 
         weighted_score = (
             concept * WEIGHT_CONCEPT
@@ -219,6 +294,8 @@ class ReflectionService:
         record.answer = answer
         record.is_voice = is_voice
         record.feedback = evaluation.get("suggestion", "")
+        record.weak_points = _dump_list(evaluation.get("weak_points"))
+        record.resources = _dump_list(evaluation.get("resources"))
         record.mastery_score = weighted_score
         record.concept_accuracy = concept
         record.logic_completeness = logic

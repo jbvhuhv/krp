@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from neo4j.exceptions import ServiceUnavailable
-from sqlalchemy import case, delete, select, update
+from sqlalchemy import case, delete, or_, select, update
 from sqlalchemy import func as sa_func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -261,12 +261,25 @@ async def list_posts(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
     tag: str | None = Query(None, description="按标签过滤"),
+    q: str | None = Query(None, max_length=50, description="按标题/简介搜索"),
     sort: str = Query("newest", pattern="^(newest|hottest)$"),
     current_user_id: str | None = Depends(get_optional_user_id),
     db: AsyncSession = Depends(get_db),
 ):
     query = select(CommunityPost).where(CommunityPost.is_public.is_(True))
     offset = (page - 1) * size
+
+    if q and q.strip():
+        # 关键词必须在服务端过滤：前端只取首页数据再本地过滤，等于只搜了最近 N 条。
+        # 这里去掉 LIKE 的通配符，避免用户输入 "%" 就命中全站。
+        keyword = q.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        pattern = f"%{keyword}%"
+        query = query.where(
+            or_(
+                CommunityPost.title.ilike(pattern, escape="\\"),
+                CommunityPost.description.ilike(pattern, escape="\\"),
+            )
+        )
 
     if tag:
         # tags 为 JSON 列，SQLite 下 Unicode 转义导致 SQL contains 不可靠，故标签过滤在 Python 端完成
@@ -283,9 +296,7 @@ async def list_posts(
         # 无标签过滤时下推到数据库，避免全表加载 + 内存分页
         total = (
             await db.execute(
-                select(sa_func.count())
-                .select_from(CommunityPost)
-                .where(CommunityPost.is_public == True)  # noqa: E712
+                select(sa_func.count()).select_from(query.order_by(None).subquery())
             )
         ).scalar_one()
         if sort == "hottest":
@@ -357,6 +368,7 @@ async def get_post(
     # 浏览量口径：作者查看自己的帖子不计；登录用户同一帖子 24 小时内只计一次；
     # 未登录访客无法稳定识别，照常计数。
     should_count = False
+    dirty = False
     now = _utcnow()
     if not current_user_id:
         should_count = True
@@ -376,13 +388,17 @@ async def get_post(
                 )
             )
             should_count = True
+            dirty = True
         else:
             last_viewed = view.viewed_at
             if last_viewed is not None and last_viewed.tzinfo is not None:
                 last_viewed = last_viewed.astimezone(timezone.utc).replace(tzinfo=None)
             if last_viewed is None or (now - last_viewed) >= timedelta(hours=24):
                 should_count = True
-            view.viewed_at = now
+                # 只有真的计数时才刷新时间戳：窗口锚定在「首次查看」，
+                # 也避免读接口每个请求都持一次写锁（SQLite 下会与抽取写入互相阻塞）。
+                view.viewed_at = now
+                dirty = True
 
     if should_count:
         await db.execute(
@@ -390,8 +406,10 @@ async def get_post(
             .where(CommunityPost.id == post_id)
             .values(views_count=CommunityPost.views_count + 1)
         )
+        dirty = True
 
-    await db.commit()
+    if dirty:
+        await db.commit()
 
     brief = await _build_brief(db, post, current_user_id)
     snapshot = GraphSnapshot(

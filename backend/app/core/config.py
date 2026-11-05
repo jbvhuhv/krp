@@ -56,6 +56,9 @@ class Settings(BaseSettings):
     LLM_API_KEY: str = ""
     LLM_BASE_URL: str = ""
     LLM_MODEL: str = ""
+    # 结构化输出：抽取与评分要求模型返回 JSON 对象。上游不支持 response_format 时会自动
+    # 退化为纯文本调用（见 MaasProvider.chat），因此默认开启即可安全上线。
+    LLM_JSON_MODE: bool = True
 
     MAAS_API_KEY: str = ""
     MAAS_BASE_URL: str = ""
@@ -94,6 +97,9 @@ class Settings(BaseSettings):
 
     UPLOAD_DIR: str = "./uploads"
     MAX_FILE_SIZE: int = 10 * 1024 * 1024
+    # 每用户 24 小时内可上传的笔记数。每次上传都会触发一次（失败重试 3 次）LLM 抽取，
+    # 缺这道闸门时单个账号即可无限刷量——这是目前最大的成本敞口。
+    UPLOAD_DAILY_LIMIT: int = 20
     ALLOWED_EXTENSIONS: list[str] = [
         ".md", ".markdown", ".txt", ".pdf",
         ".doc", ".docx",

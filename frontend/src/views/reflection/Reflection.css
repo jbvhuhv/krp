@@ -47,7 +47,14 @@
   letter-spacing: 0.3px;
 }
 
-.refresh-btn {
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.refresh-btn,
+.schedule-btn {
   border-radius: 8px;
 }
 
@@ -94,6 +101,12 @@
   border-bottom: none;
   margin-bottom: 0;
   padding-bottom: 0;
+}
+.question-item.is-answered {
+  opacity: 0.6;
+}
+.question-item.is-answered .question-text {
+  color: #64748b;
 }
 
 .question-head {
@@ -402,4 +415,55 @@
 
 .timeline-empty {
   padding: 40px 0;
+}
+/* ===== 提醒设置弹窗 ===== */
+.schedule-dialog .el-dialog__header {
+  border-bottom: 1px solid rgba(99, 102, 112, 0.15);
+}
+
+.schedule-form {
+  padding: 8px 4px;
+}
+
+.schedule-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.schedule-label {
+  font-size: 14px;
+  color: #e6edf3;
+  white-space: nowrap;
+  width: 64px;
+  flex-shrink: 0;
+}
+
+.schedule-select {
+  flex: 1;
+}
+
+.time-window-pickers {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+}
+
+.time-picker {
+  flex: 1;
+}
+
+.time-sep {
+  font-size: 13px;
+  color: #8b949e;
+  flex-shrink: 0;
+}
+
+.schedule-hint {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: #8b949e;
+  line-height: 1.6;
 }

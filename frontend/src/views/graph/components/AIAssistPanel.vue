@@ -9,9 +9,11 @@ const props = defineProps({
   verifyResult: { type: Object, default: () => null },
   hintMessages: { type: Array, default: () => [] },
   previewNodes: { type: Array, default: () => [] },
+  treeData: { type: Array, default: () => [] },
+  targetNode: { type: Object, default: () => null },
 })
 
-const emit = defineEmits(['accept-missing', 'insert-suggest', 'insert-subtree', 'send-hint'])
+const emit = defineEmits(['accept-missing', 'insert-suggest', 'insert-subtree', 'send-hint', 'generate'])
 
 const hintInput = ref('')
 const hintScroll = ref(null)
@@ -70,6 +72,86 @@ function statusMeta(status) {
   return { label: '正确', cls: 'ok', icon: '✅' }
 }
 
+// ===== 预览树勾选：支持选择性插入 =====
+const previewTreeRef = ref(null)
+const keyedPreviewNodes = ref([])
+const checkedCount = ref(0)
+const selectedTargetId = ref('')
+
+watch(visible, (v) => {
+  if (v) selectedTargetId.value = ''
+})
+
+watch(
+  () => props.previewNodes,
+  (nodes) => {
+    let counter = 0
+    const walk = (arr) => arr.map((n) => ({
+      ...n,
+      _key: ++counter,
+      children: n.children?.length ? walk(n.children) : [],
+    }))
+    keyedPreviewNodes.value = walk(nodes || [])
+    nextTick(() => {
+      const allKeys = []
+      const collect = (arr) => arr.forEach((n) => {
+        allKeys.push(n._key)
+        if (n.children?.length) collect(n.children)
+      })
+      collect(keyedPreviewNodes.value)
+      previewTreeRef.value?.setCheckedKeys(allKeys)
+      checkedCount.value = allKeys.length
+    })
+  },
+  { immediate: true },
+)
+
+const allPreviewKeys = computed(() => {
+  const keys = []
+  const collect = (arr) => arr.forEach((n) => {
+    keys.push(n._key)
+    if (n.children?.length) collect(n.children)
+  })
+  collect(keyedPreviewNodes.value)
+  return keys
+})
+
+function updateCheckedCount() {
+  checkedCount.value = previewTreeRef.value?.getCheckedNodes()?.length || 0
+}
+
+function toggleAll() {
+  const isAll = checkedCount.value === allPreviewKeys.value.length
+  previewTreeRef.value?.setCheckedKeys(isAll ? [] : allPreviewKeys.value)
+  updateCheckedCount()
+}
+
+function invertSelection() {
+  const checkedKeys = new Set(previewTreeRef.value?.getCheckedKeys() || [])
+  const inverted = allPreviewKeys.value.filter((k) => !checkedKeys.has(k))
+  previewTreeRef.value?.setCheckedKeys(inverted)
+  updateCheckedCount()
+}
+
+function confirmInsert() {
+  const checked = previewTreeRef.value?.getCheckedNodes() || []
+  if (!checked.length) return
+  const checkedSet = new Set(checked)
+  const filterTree = (nodes) => {
+    const result = []
+    for (const node of nodes) {
+      const children = node.children?.length ? filterTree(node.children) : []
+      if (checkedSet.has(node)) {
+        result.push({ ...node, children })
+      } else if (children.length) {
+        result.push(...children)
+      }
+    }
+    return result
+  }
+  emit('insert-subtree', { nodes: filterTree(keyedPreviewNodes.value), targetId: selectedTargetId.value })
+}
+
 function close() {
   visible.value = false
 }
@@ -85,6 +167,7 @@ function close() {
     :with-header="false"
     append-to-body
     class="ai-assist-drawer"
+    :class="{ 'ai-streaming': loading }"
   >
     <div class="ai-inner" v-loading="loading">
       <div class="ai-head">
@@ -220,28 +303,82 @@ function close() {
     append-to-body
     class="ai-preview-dialog"
   >
-    <div class="ai-preview-hint">确认后将以蓝色节点插入到当前节点下，可随时右键「接受」转为你的节点。</div>
-    <div class="ai-preview-tree" v-loading="loading">
-      <el-tree
-        :data="previewNodes"
-        :props="{ label: 'name', children: 'children' }"
-        default-expand-all
-        :expand-on-click-node="false"
-      >
-        <template #default="{ data }">
-          <span class="preview-node">
-            <span class="preview-dot"></span>
-            <span class="preview-name">{{ data.name }}</span>
-          </span>
-        </template>
-      </el-tree>
-      <div v-if="!loading && !previewNodes.length" class="ai-empty">未生成内容</div>
+    <template #header>
+      <div class="preview-header">
+        <span class="preview-header-icon">🌿</span>
+        <span class="preview-header-title">AI 生成的子树预览</span>
+      </div>
+    </template>
+    <div class="preview-target">
+      <span class="preview-target-label">插入到</span>
+      <el-tree-select
+        v-model="selectedTargetId"
+        :data="treeData"
+        :props="{ label: 'name', children: 'children', value: 'id' }"
+        check-strictly
+
+        :render-after-expand="false"
+        placeholder="请选择插入目标节点"
+        popper-class="preview-target-popper"
+        class="preview-target-select"
+      />
+    </div>
+    <template v-if="previewNodes.length">
+      <div class="preview-hint">
+        <span class="preview-hint-icon">💡</span>
+        <span>勾选要插入的节点，确认后以蓝色节点插入到目标节点下，可随时右键「接受」转为你的节点。</span>
+      </div>
+      <div class="preview-toolbar">
+        <div class="preview-toolbar-left">
+          <button class="preview-tool-btn" @click="toggleAll">
+            {{ checkedCount === allPreviewKeys.length ? '取消全选' : '全选' }}
+          </button>
+          <button class="preview-tool-btn" @click="invertSelection">反选</button>
+        </div>
+        <span class="preview-toolbar-count">已选 <b>{{ checkedCount }}</b> / {{ allPreviewKeys.length }}</span>
+      </div>
+      <div class="preview-tree-box">
+        <el-tree
+          ref="previewTreeRef"
+          :data="keyedPreviewNodes"
+          :props="{ label: 'name', children: 'children' }"
+          node-key="_key"
+          show-checkbox
+          default-expand-all
+          :expand-on-click-node="false"
+          @check="updateCheckedCount"
+        >
+          <template #default="{ data }">
+            <span class="preview-node" :class="{ 'is-branch': data.children?.length }">
+              <span class="preview-dot"></span>
+              <span class="preview-name">{{ data.name }}</span>
+            </span>
+          </template>
+        </el-tree>
+      </div>
+    </template>
+    <div v-else-if="!loading" class="preview-placeholder">
+      <span class="preview-placeholder-icon">🎯</span>
+      <p>选择目标节点后，点击「生成子树」开始</p>
+    </div>
+    <div v-if="loading" class="preview-loading">
+      <span class="preview-loading-spinner"></span>
+      <p>AI 正在生成子树...</p>
     </div>
     <template #footer>
-      <el-button @click="close">取消</el-button>
-      <el-button type="primary" :disabled="!previewNodes.length" @click="emit('insert-subtree', previewNodes)">
-        确认插入
-      </el-button>
+      <div class="preview-footer">
+        <span v-if="previewNodes.length" class="preview-footer-stat">将插入 {{ checkedCount }} 个节点</span>
+        <div class="preview-footer-btns">
+          <el-button @click="close">取消</el-button>
+          <el-button v-if="!previewNodes.length" type="primary" :disabled="!selectedTargetId || loading" @click="emit('generate', selectedTargetId)">
+            生成子树
+          </el-button>
+          <template v-else>
+            <el-button :disabled="loading" @click="emit('generate', selectedTargetId)">重新生成</el-button>
+            <el-button type="primary" :disabled="!checkedCount" @click="confirmInsert">确认插入</el-button>
+          </template>
+        </div>
+      </div>
     </template>
   </el-dialog>
 </template>

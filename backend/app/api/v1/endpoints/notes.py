@@ -1,7 +1,7 @@
 import asyncio
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import (
     APIRouter,
@@ -20,10 +20,12 @@ from app.api.deps import (
     get_current_user_id,
     get_db,
     get_extraction_service,
+    get_graph_service,
     get_ocr_service,
 )
 from app.core.config import settings
 from app.core.constants import NOTE_STATUS
+from app.core.exceptions import ForbiddenException
 from app.core.logger import get_logger
 from app.core.upload_guard import read_upload_limited
 from app.models.note import Note
@@ -89,6 +91,26 @@ async def upload_note(
     extraction_service: ExtractionService = Depends(get_extraction_service),
     ocr_service: OcrService = Depends(get_ocr_service),
 ):
+    # 每用户 24 小时上传配额：一次上传 = 一次 LLM 抽取（失败还会重试 3 次），
+    # 登录用户侧原本没有任何闸门，是最容易被刷量的入口。
+    since = datetime.now(timezone.utc) - timedelta(hours=24)
+    uploaded_recently = (
+        await db.execute(
+            select(func.count(Note.id)).where(
+                Note.user_id == user_id,
+                Note.upload_time >= since,
+            )
+        )
+    ).scalar_one()
+    if (uploaded_recently or 0) >= settings.UPLOAD_DAILY_LIMIT:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=(
+                f"24 小时内最多上传 {settings.UPLOAD_DAILY_LIMIT} 篇笔记，"
+                "请稍后再试（已上传的笔记仍可正常复习）"
+            ),
+        )
+
     # 分块读取并在超限时立即中断，避免超大上传先把内存打满（原实现是整体 read 后再比长度）
     content_bytes = await read_upload_limited(file, settings.MAX_FILE_SIZE)
     if not content_bytes:
@@ -243,6 +265,7 @@ async def delete_note(
     note_id: str,
     user_id: str = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
+    graph_service=Depends(get_graph_service),
 ):
     from sqlalchemy import select
 
@@ -259,5 +282,13 @@ async def delete_note(
             os.remove(note.file_path)
         except OSError:
             pass
+    try:
+        deleted = await graph_service.delete_by_note_id(user_id, note_id)
+        if deleted:
+            logger.info("删笔记 %s 同步清理图谱节点 %d 个", note_id, deleted)
+    except ForbiddenException:
+        logger.warning("删笔记 %s：当前为只读演示环境，图谱节点无法自动清理", note_id)
+    except Exception:
+        logger.exception("删笔记 %s 清理图谱失败，忽略继续", note_id)
     await db.delete(note)
     await db.commit()

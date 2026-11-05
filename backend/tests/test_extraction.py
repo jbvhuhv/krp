@@ -267,9 +267,45 @@ async def test_extraction_returns_failed_after_max_attempts(tmp_path):
     )
 
     assert result["status"] == "failed"
-    assert "LLM 持续失败" in result["error"]
+    # 失败原因不再原样透给用户：上游地址/状态码只进日志，界面只拿可读文案
+    assert "LLM 持续失败" not in result["error"]
+    assert "http" not in result["error"].lower()
+    assert result["error"]
     assert ai_service.extract_knowledge.await_count == 2
     graph_service.write_extraction_result.assert_not_called()
+
+
+async def test_extraction_error_message_does_not_leak_upstream(tmp_path):
+    """上游 401 与接口地址不能出现在用户可见的 error_message 里。"""
+    import httpx
+
+    from app.services.extraction_service import ExtractionService, public_error_message
+
+    note_file = tmp_path / "leak.md"
+    note_file.write_text("some content")
+
+    request = httpx.Request("POST", "https://maas.example.com/v1/chat/completions")
+    response = httpx.Response(401, request=request)
+    err = httpx.HTTPStatusError("401 Unauthorized for url", request=request, response=response)
+
+    ai_service = AsyncMock()
+    ai_service.extract_knowledge = AsyncMock(side_effect=err)
+    graph_service = AsyncMock()
+
+    service = ExtractionService(
+        ai_service=ai_service,
+        graph_service=graph_service,
+        max_attempts=1,
+        backoff_seconds=0,
+    )
+    result = await service.extract_and_build_graph(
+        note_id="note-leak", user_id="user-leak", file_path=str(note_file), fmt="md"
+    )
+
+    message = public_error_message(err)
+    assert result["error"] == message
+    assert "example.com" not in message
+    assert "401" in message  # 状态码可以留，地址不行
 
 
 async def test_extraction_retries_on_missing_file(tmp_path):

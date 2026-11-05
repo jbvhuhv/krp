@@ -21,6 +21,10 @@ class ReflectionRecord(Base):
     example_reasonableness: Mapped[float | None] = mapped_column(Float, nullable=True)
     target_node_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     node_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # 评分时的薄弱点与推荐资源：JSON 数组的字符串形式。
+    # 不落库的话，用户重新打开同一道题只能看到分数，看不到当初的分析。
+    weak_points: Mapped[str | None] = mapped_column(Text, nullable=True)
+    resources: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_voice: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     answered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

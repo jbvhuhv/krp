@@ -67,29 +67,42 @@ def _node_tag(node: dict) -> str:
     return "目录" if node.get("node_type") == "category" else "知识点"
 
 
-def _build_outline(book: dict, nodes: list[dict], root_id: str | None = None) -> str:
+def _outline_line(seq: int, depth: int, node: dict) -> str:
+    name = node.get("name", "")
+    summary = str(node.get("summary", "") or "").strip()
+    if summary:
+        summary = summary[:80] + ("…" if len(summary) > 80 else "")
+    body = f"{name}｜{summary}" if summary else name
+    return f"{'  ' * depth}- #{seq} [{_node_tag(node)}] {body}"
+
+
+def _build_outline(book: dict, nodes: list[dict], root_id: str | None = None) -> tuple[str, list[str]]:
     children: dict[str | None, list[dict]] = {}
     for node in nodes:
         children.setdefault(node.get("parent_id"), []).append(node)
 
     id_to_node = {n.get("id"): n for n in nodes}
     lines: list[str] = []
+    index_to_id: list[str] = []
 
     def walk(parent_id: str | None, depth: int) -> None:
         if len(lines) >= MAX_OUTLINE_LINES or depth > MAX_OUTLINE_DEPTH:
             return
         for child in children.get(parent_id, []):
-            lines.append(f"{'  ' * depth}- [{_node_tag(child)}] {child.get('name', '')}")
+            seq = len(index_to_id) + 1
+            index_to_id.append(child.get("id"))
+            lines.append(_outline_line(seq, depth, child))
             walk(child.get("id"), depth + 1)
 
     if root_id and root_id in id_to_node:
         node = id_to_node[root_id]
-        lines.append(f"[{_node_tag(node)}] {node.get('name', '')}")
+        index_to_id.append(node.get("id"))
+        lines.append(_outline_line(1, 0, node))
         walk(root_id, 1)
     else:
         lines.append(f"书名：{book.get('name', '')}")
         walk(book.get("id"), 0)
-    return "\n".join(lines)
+    return "\n".join(lines), index_to_id
 
 
 def _to_node(data: dict) -> BrainstormNode:
@@ -127,7 +140,7 @@ async def verify_structure(
             status_code=status.HTTP_404_NOT_FOUND, detail="节点不存在"
         )
 
-    outline = _build_outline(data["book"], nodes, payload.node_id)
+    outline, index_to_id = _build_outline(data["book"], nodes, payload.node_id)
     result = await ai_service.verify_structure(outline)
     if result.get("status") == "failed":
         return VerifyResponse(status="failed", message=result.get("message", ""))
@@ -138,15 +151,39 @@ async def verify_structure(
         if not isinstance(item, dict):
             continue
         node_name = str(item.get("node_name") or item.get("name") or "")
+        node_index = item.get("node_index")
+        node_id = None
+        if node_index is not None:
+            try:
+                idx = int(node_index) - 1
+                if 0 <= idx < len(index_to_id):
+                    node_id = index_to_id[idx]
+            except (ValueError, TypeError):
+                pass
+        if node_id is None:
+            node_id = name_to_id.get(node_name)
         issues.append(
             VerifyIssue(
-                node_id=name_to_id.get(node_name),
+                node_id=node_id,
                 node_name=node_name,
                 status=str(item.get("status", "error") or "error"),
                 reason=str(item.get("reason", "") or ""),
             )
         )
-    missing = [_to_node(m) for m in result.get("missing", []) if isinstance(m, dict)]
+    id_to_name = {n.get("id"): n.get("name", "") for n in nodes}
+    missing_raw = result.get("missing", [])
+    for m in missing_raw:
+        if not isinstance(m, dict):
+            continue
+        pidx = m.get("parent_index")
+        if pidx is not None and "parent_name" not in m:
+            try:
+                idx = int(pidx) - 1
+                if 0 <= idx < len(index_to_id):
+                    m["parent_name"] = id_to_name.get(index_to_id[idx], "")
+            except (ValueError, TypeError):
+                pass
+    missing = [_to_node(m) for m in missing_raw if isinstance(m, dict)]
     return VerifyResponse(
         status="ok",
         overall=str(result.get("overall", "") or ""),
@@ -172,15 +209,22 @@ async def suggest(
     node_summary = node.get("summary", "")
 
     if payload.mode == "generate":
-        result = await ai_service.generate_subtree(node_name, node_summary)
+        existing = await graph_service.get_children(user_id, payload.node_id)
+        existing_set = {str(c.get("name", "")).strip() for c in existing if c.get("name")}
+        existing_names = "、".join(sorted(existing_set)) if existing_set else ""
+        result = await ai_service.generate_subtree(node_name, node_summary, existing_names)
         if result.get("status") == "failed":
             return SuggestResponse(
                 status="failed", message=result.get("message", ""), mode="generate"
             )
+        nodes = [
+            n for n in result.get("nodes", [])
+            if isinstance(n, dict) and str(n.get("name", "")).strip() not in existing_set
+        ]
         return SuggestResponse(
             status="ok",
             mode="generate",
-            subtree=[_to_node(n) for n in result.get("nodes", []) if isinstance(n, dict)],
+            subtree=[_to_node(n) for n in nodes],
         )
 
     user_idea = (payload.user_idea or "").strip()

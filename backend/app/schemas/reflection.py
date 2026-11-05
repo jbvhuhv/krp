@@ -8,6 +8,7 @@ class ReflectionQuestion(BaseModel):
     question: str
     target_node_id: str | None = None
     node_name: str | None = None
+    answered: bool = False
 
 
 class AnswerSubmit(BaseModel):
@@ -24,6 +25,8 @@ class FeedbackOut(BaseModel):
     weak_points: list[str] = []
     suggestion: str = ""
     resources: list[str] = []
+    # true 表示这道题此前已作答，本次返回的是缓存的评分（不会二次调用模型）
+    already_answered: bool = False
 
 
 class ReflectionHistoryItem(BaseModel):

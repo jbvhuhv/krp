@@ -168,11 +168,12 @@ class PromptManager:
         )
 
     def get_brainstorm_generate_prompt(
-        self, node_name: str, node_summary: str
+        self, node_name: str, node_summary: str, existing_children: str = ""
     ) -> str:
         return brainstorm_prompts.BRAINSTORM_GENERATE_PROMPT.format(
             node_name=node_name,
             node_summary=node_summary or "无",
+            existing_children=existing_children or "无",
         )
 
     # ------------------------------------------------------------------ 内部

@@ -4,6 +4,8 @@ from abc import ABC, abstractmethod
 
 import httpx
 
+from app.core.config import settings
+
 AI_BUSY_MESSAGE = "AI繁忙，请稍后重试"
 
 # 覆盖网络层异常（连接失败 ConnectError、读写中断、超时）与 HTTP 状态异常，
@@ -52,6 +54,20 @@ def degraded_result(message: str = AI_BUSY_MESSAGE, **extra) -> dict:
     result: dict = {"status": "failed", "message": message}
     result.update(extra)
     return result
+
+
+def json_call_kwargs(temperature: float | None = 0) -> dict:
+    """构造「要求模型返回 JSON」的调用参数。
+
+    temperature 默认 0：评分与抽取必须可复现——同一份答案提交两次不该得到两个分数。
+    上游若不支持 response_format，MaasProvider 会自动去掉该参数重试一次。
+    """
+    kwargs: dict = {}
+    if settings.LLM_JSON_MODE:
+        kwargs["response_format"] = {"type": "json_object"}
+    if temperature is not None:
+        kwargs["temperature"] = temperature
+    return kwargs
 
 
 class LLMProvider(ABC):

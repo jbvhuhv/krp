@@ -33,19 +33,19 @@ BRAINSTORM_VERIFY_PROMPT = (
     + _NODE_TYPE_RULE
     + """
 
-你是知识结构校对专家。下面是用户绘制的一本知识书的目录结构（缩进表示父子层级）：
+你是知识结构校对专家。下面是用户绘制的一本知识书的目录结构（缩进表示父子层级，#序号 是每个节点的唯一编号，｜后为该节点的摘要说明）：
 
 \"\"\"{tree_text}\"\"\"
 
-请检查该结构的合理性：
-1. 是否存在归类错误的知识点（放错了父级）；
-2. 是否存在表述错误或不恰当的节点；
+请结合每个节点的名称与摘要判断该结构的合理性：
+1. 是否存在归类错误的知识点（摘要内容与父级主题不匹配）；
+2. 是否存在表述错误或摘要与名称不符的节点；
 3. 相比该主题，缺失了哪些必要的知识点或目录。
 
 以 JSON 返回，不要包含其他内容：
-{{"overall": "两三句话的整体评价", "issues": [{{"node_name": "节点名称", "status": "error", "reason": "问题原因"}}], "missing": [{{"name": "缺失节点名称", "summary": "一句话摘要", "node_type": "knowledge", "type": "concept", "reason": "为什么需要", "parent_name": "建议挂靠的节点名称"}}]}}
+{{"overall": "两三句话的整体评价", "issues": [{{"node_index": 节点序号, "node_name": "节点名称", "status": "error", "reason": "问题原因"}}], "missing": [{{"name": "缺失节点名称", "summary": "一句话摘要", "node_type": "knowledge", "type": "concept", "reason": "为什么需要", "parent_index": 建议挂靠的节点序号}}]}}
 
-说明：status 只能取 error（内容错误）或 misplaced（位置不当）或 correct（正常，无需列出）。issues 只列出有问题的节点；若结构合理，issues 与 missing 可为空数组。当缺失的是一个成组主题时，将其 node_type 设为 category，并可附带 children 子知识点。"""
+说明：node_index 和 parent_index 必须使用上面大纲中 # 后的序号（整数），不要凭空编造。status 只能取 error（内容错误）或 misplaced（位置不当）或 correct（正常，无需列出）。issues 只列出有问题的节点；若结构合理，issues 与 missing 可为空数组。当缺失的是一个成组主题时，将其 node_type 设为 category，并可附带 children 子知识点。missing 必须贴合已有节点的实际内容方向，不要引入与现有知识无关的泛泛内容。"""
 )
 
 BRAINSTORM_HINT_PROMPT = (
@@ -110,12 +110,14 @@ BRAINSTORM_GENERATE_PROMPT = (
 
 你是知识结构化专家。请为知识点「{node_name}」系统性地生成下级内容，形成一棵完整的子树。
 该节点当前摘要：{node_summary}
+该节点已有的下级节点：{existing_children}
 
 要求：
 1. 顶层优先用 1-3 个 category 目录对内容分组，形成「目录 → 知识点」的分级结构；只有主题确实不可再分时，才用扁平的知识点；
-2. 每个目录下挂 2-4 个 knowledge 知识点，整棵子树共 5-10 个节点，最多嵌套两层；
+2. 每个目录下挂 3-5 个 knowledge 知识点，整棵子树共 10-18 个节点，最多嵌套两层；
 3. 内容需与主题紧密相关，覆盖该主题的主要方面；
-4. 每个节点都要有 name、node_type、summary，knowledge 需带 type。
+4. 不要与已有子节点重名或语义重复，只生成补充性的新内容；
+5. 每个节点都要有 name、node_type、summary，knowledge 需带 type。
 
 以 JSON 返回，不要包含其他内容：
 {{"nodes": [{{"name": "目录名称", "node_type": "category", "summary": "一句话摘要", "children": [{{"name": "知识点名称", "node_type": "knowledge", "type": "concept", "summary": "一句话摘要", "children": []}}]}}]}}

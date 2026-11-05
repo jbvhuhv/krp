@@ -69,6 +69,12 @@ _AVATAR_COLUMNS = {
     "avatar_url": "VARCHAR(255)",
 }
 
+# 反思记录的评分明细：薄弱点与推荐资源（JSON 数组字符串）
+_REFLECTION_COLUMNS = {
+    "weak_points": "TEXT",
+    "resources": "TEXT",
+}
+
 _TABLE_COLUMNS = {
     "notes": _NOTES_COLUMNS,
     "pets": _PETS_COLUMNS,
@@ -77,6 +83,7 @@ _TABLE_COLUMNS = {
     "users": _USERS_COLUMNS,
     "avatars": _AVATAR_COLUMNS,
     "notifications": _NOTIFICATIONS_COLUMNS,
+    "reflection_records": _REFLECTION_COLUMNS,
 }
 
 

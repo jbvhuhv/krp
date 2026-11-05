@@ -1,6 +1,8 @@
 import asyncio
 from datetime import datetime, timezone
 
+import httpx
+
 from app.core.config import settings
 from app.core.constants import NOTE_STATUS
 from app.core.logger import get_logger
@@ -9,6 +11,25 @@ from app.services.file_parser import parse_file
 from app.services.graph_service import GraphService
 
 logger = get_logger(__name__)
+
+
+def public_error_message(exc: BaseException | None) -> str:
+    """把内部异常翻译成可以展示给学生的文案。
+
+    原始异常里带着上游地址、状态码甚至鉴权细节，直接落库再渲染到界面上，
+    既泄露内部拓扑，对用户也毫无意义。细节只进日志（logger.error 已带 exc_info）。
+    """
+    text = str(exc or "")
+    # 唯一的例外：配置缺失必须原样告知，否则部署者只看到「抽取失败」无从下手。
+    if isinstance(exc, RuntimeError) and "AI 服务未配置" in text:
+        return text
+    if isinstance(exc, httpx.TimeoutException):
+        return "AI 服务响应超时，请稍后重试"
+    if isinstance(exc, httpx.HTTPStatusError):
+        return f"AI 服务暂时不可用（HTTP {exc.response.status_code}），请稍后重试"
+    if isinstance(exc, httpx.RequestError):
+        return "无法连接 AI 服务，请检查网络后重试"
+    return "笔记解析失败，请检查文件内容后重试（扫描件请转成图片上传）"
 
 
 def _backfill_edges(result: dict) -> None:
@@ -148,14 +169,14 @@ class ExtractionService:
         await self._update_note(
             note_id,
             status=NOTE_STATUS["FAILED"],
-            error_message=str(last_error),
+            error_message=public_error_message(last_error),
             processed_time=datetime.now(timezone.utc),
         )
         return {
             "nodes": [],
             "edges": [],
             "status": NOTE_STATUS["FAILED"],
-            "error": str(last_error),
+            "error": public_error_message(last_error),
         }
 
     async def _load_image_text(self, note_id: str) -> str:

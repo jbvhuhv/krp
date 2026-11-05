@@ -728,8 +728,11 @@ async function sendHintMessage(userIdea) {
   const { signal } = hintAbort
   const isCurrent = () => hintAbort?.signal === signal
   aiLoading.value = true
-  const aiMsg = { role: 'ai', text: '', suggestions: [] }
-  hintMessages.value.push(aiMsg)
+  hintMessages.value.push({ role: 'ai', text: '', suggestions: [] })
+  // 必须从 ref 数组取回 reactive 代理对象：直接操作 push 前的普通对象，
+  // Vue 3 不会感知变更，流式 delta 逐字追加时界面不刷新，
+  // 直到流结束 aiLoading 变化才一次性渲染整段文本（"先模糊再整段"的根因）。
+  const aiMsg = hintMessages.value[hintMessages.value.length - 1]
   try {
     await brainstormApi.suggestStream(
       { book_id: bookId.value, node_id: target.id, mode: 'hint', user_idea: idea || null },
@@ -756,31 +759,38 @@ async function sendHintMessage(userIdea) {
   }
 }
 
-async function runGenerate() {
+function runGenerate() {
   if (!currentNode.value) { ElMessage.warning('请先选中一个节点'); return }
   aiMode.value = 'generate'
   previewNodes.value = []
   aiTargetNode.value = currentNode.value
   aiPanelVisible.value = true
+}
+
+async function onGenerate(targetId) {
+  const target = flatNodes.value.find((n) => n.id === targetId)
+  if (!target) return
+  aiTargetNode.value = target
   aiLoading.value = true
+  previewNodes.value = []
   try {
     const res = await brainstormApi.suggest({
       book_id: bookId.value,
-      node_id: currentNode.value.id,
+      node_id: target.id,
       mode: 'generate',
     })
     if (res.status === 'failed') {
       notifyError(res.message || 'AI 生成失败')
-      previewNodes.value = []
     } else {
       previewNodes.value = res.subtree || []
     }
   } catch {
-    previewNodes.value = []
+    notifyError('生成失败')
   } finally {
     aiLoading.value = false
   }
 }
+
 
 function resolveParentIdByName(name) {
   if (!name) return bookId.value
@@ -849,8 +859,8 @@ async function onInsertSuggest(suggestion) {
   }
 }
 
-async function onInsertSubtree(nodes) {
-  const target = aiTargetNode.value
+async function onInsertSubtree({ nodes, targetId }) {
+  const target = flatNodes.value.find((n) => n.id === targetId) || aiTargetNode.value
   if (!target || !nodes?.length) return
   aiLoading.value = true
   try {
@@ -1283,10 +1293,13 @@ watch(treeData, () => {
       :verify-result="verifyResult"
       :hint-messages="hintMessages"
       :preview-nodes="previewNodes"
+      :tree-data="treeData"
+      :target-node="aiTargetNode"
       @accept-missing="onAcceptMissing"
       @insert-suggest="onInsertSuggest"
       @insert-subtree="onInsertSubtree"
       @send-hint="sendHintMessage"
+      @generate="onGenerate"
     />
 
     <!-- 已保存轻提示 -->

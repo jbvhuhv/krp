@@ -1,8 +1,13 @@
+import httpx
+
+from app.core.logger import get_logger
 from app.services.providers.base import (
     EmbeddingProvider,
     LLMProvider,
     get_http_client,
 )
+
+logger = get_logger(__name__)
 
 
 class MaasProvider(LLMProvider):
@@ -18,8 +23,7 @@ class MaasProvider(LLMProvider):
                 "（或 MAAS_BASE_URL/MAAS_API_KEY 及 LLM_MODEL）"
             )
 
-    async def chat(self, prompt: str, **kwargs) -> str:
-        self._ensure_configured()
+    async def _chat_once(self, prompt: str, kwargs: dict) -> str:
         client = get_http_client()
         resp = await client.post(
             f"{self.base_url}/v1/chat/completions",
@@ -32,6 +36,22 @@ class MaasProvider(LLMProvider):
         )
         resp.raise_for_status()
         return resp.json()["choices"][0]["message"]["content"]
+
+    async def chat(self, prompt: str, **kwargs) -> str:
+        self._ensure_configured()
+        try:
+            return await self._chat_once(prompt, kwargs)
+        except httpx.HTTPStatusError as exc:
+            # 部分 OpenAI 兼容端点不认 response_format，会直接 400/422。
+            # 此时退化成纯文本调用再试一次，避免把一次「格式参数不兼容」升级成抽取失败。
+            if "response_format" in kwargs and exc.response.status_code in (400, 422):
+                logger.warning(
+                    "上游不支持 response_format，降级为纯文本调用：%s",
+                    exc.response.status_code,
+                )
+                fallback = {k: v for k, v in kwargs.items() if k != "response_format"}
+                return await self._chat_once(prompt, fallback)
+            raise
 
     async def stream_chat(self, prompt: str, **kwargs):
         self._ensure_configured()

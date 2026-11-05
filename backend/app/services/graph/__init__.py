@@ -13,6 +13,7 @@ from app.services.graph.vector import VectorMixin
 __all__ = [
     "GraphService",
     "init_vector_index",
+    "init_property_indexes",
     "ping_neo4j",
     "set_neo4j_available",
     "neo4j_available",
@@ -106,6 +107,27 @@ async def init_vector_index(
         logger.warning(
             "创建 Neo4j 向量索引失败（Neo4j 可能未启动），已跳过", exc_info=True
         )
+
+
+# 属性索引：crud.py 里几乎每条查询都是 MATCH (n {user_id, node_type} ...)，
+# 没有属性索引时每次打开图谱都是全标签扫描（Neo4j 只会自动为 id 建索引）。
+_PROPERTY_INDEXES = (
+    ("knowledge_user_idx", f"(n:{NODE_LABEL}) ON (n.user_id)"),
+    ("knowledge_user_type_idx", f"(n:{NODE_LABEL}) ON (n.user_id, n.node_type)"),
+    ("knowledge_note_idx", f"(n:{NODE_LABEL}) ON (n.source_note_id)"),
+)
+
+
+async def init_property_indexes(driver: AsyncDriver) -> None:
+    """幂等创建属性索引；失败只记日志，不影响启动（与向量索引同样的降级策略）。"""
+    for name, target in _PROPERTY_INDEXES:
+        try:
+            async with driver.session() as session:
+                await session.run(
+                    f"CREATE INDEX {name} IF NOT EXISTS FOR {target}"
+                )
+        except Exception:
+            logger.warning("创建 Neo4j 属性索引失败 name=%s，已跳过", name, exc_info=True)
 
 
 class GraphService(CrudMixin, TreeMixin, VectorMixin, StatsMixin):

@@ -3,22 +3,28 @@ from unittest.mock import AsyncMock, MagicMock
 
 
 class _FakeResult:
-    def __init__(self, users):
-        self._users = users
+    def __init__(self, rows):
+        self._rows = rows
 
     def scalars(self):
         return self
 
     def all(self):
-        return self._users
+        return self._rows
 
 
 class _FakeDB:
+    """第一次 execute 返回 users，第二次返回空 schedules（无自定义设置）。"""
+
     def __init__(self, users):
         self._users = users
+        self._call = 0
 
     async def execute(self, *args, **kwargs):
-        return _FakeResult(self._users)
+        self._call += 1
+        if self._call == 1:
+            return _FakeResult(self._users)
+        return _FakeResult([])
 
 
 class _FakeSessionCtx:
@@ -61,9 +67,9 @@ class TestDailyReflectionJob:
             monkeypatch, sched, users, [[object(), object()], [object()]]
         )
 
-        result = await sched.run_daily_reflection_job()
+        result = await sched.run_default_reflection_job()
 
-        assert result == {"users_processed": 2, "notified": 2}
+        assert result == {"notified": 2}
         assert notification_service.create.await_count == 2
         first_call = notification_service.create.call_args_list[0].kwargs
         assert first_call["type"] == "reflection"
@@ -77,9 +83,9 @@ class TestDailyReflectionJob:
             monkeypatch, sched, users, [[]]
         )
 
-        result = await sched.run_daily_reflection_job()
+        result = await sched.run_default_reflection_job()
 
-        assert result == {"users_processed": 0, "notified": 0}
+        assert result == {"notified": 0}
         notification_service.create.assert_not_called()
 
     async def test_continues_when_one_user_fails(self, monkeypatch):
@@ -93,9 +99,9 @@ class TestDailyReflectionJob:
             [RuntimeError("生成失败"), [object()]],
         )
 
-        result = await sched.run_daily_reflection_job()
+        result = await sched.run_default_reflection_job()
 
-        assert result == {"users_processed": 1, "notified": 1}
+        assert result == {"notified": 1}
         assert notification_service.create.await_count == 1
 
     async def test_no_users(self, monkeypatch):
@@ -103,9 +109,9 @@ class TestDailyReflectionJob:
 
         _, notification_service = _patch_scheduler_deps(monkeypatch, sched, [], [])
 
-        result = await sched.run_daily_reflection_job()
+        result = await sched.run_default_reflection_job()
 
-        assert result == {"users_processed": 0, "notified": 0}
+        assert result == {"notified": 0}
 
 
 class TestSchedulerSetup:
@@ -118,7 +124,7 @@ class TestSchedulerSetup:
         sched.scheduler.remove_all_jobs()
         try:
             sched.setup_scheduler()
-            job = sched.scheduler.get_job(sched.JOB_ID)
+            job = sched.scheduler.get_job(sched.DEFAULT_JOB_ID)
             assert job is not None
         finally:
             sched.shutdown_scheduler()

@@ -63,8 +63,8 @@ class BrainstormMixin:
             logger.warning("想法引导流式调用 LLM 失败：%s", exc)
             raise
 
-    async def generate_subtree(self, node_name: str, node_summary: str) -> dict:
-        prompt = prompt_manager.get_brainstorm_generate_prompt(node_name, node_summary)
+    async def generate_subtree(self, node_name: str, node_summary: str, existing_children: str = "") -> dict:
+        prompt = prompt_manager.get_brainstorm_generate_prompt(node_name, node_summary, existing_children)
         try:
             response = await self.llm.chat(prompt)
         except _ERROR_TYPES as exc:

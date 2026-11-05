@@ -14,7 +14,7 @@ from app.schemas.reflection import (
     ScheduleUpdate,
 )
 from app.services.providers.base import AI_BUSY_MESSAGE
-from app.services.reflection_service import ReflectionService
+from app.services.reflection_service import ReflectionService, _generate_lock
 
 router = APIRouter()
 
@@ -25,14 +25,36 @@ async def get_today_questions(
     reflection_service: ReflectionService = Depends(get_reflection_service),
 ):
     questions = await reflection_service.get_today_questions(user_id)
-    if not questions:
-        questions = await reflection_service.generate_questions(user_id)
     return [
         ReflectionQuestion(
             id=q.id,
             question=q.question,
             target_node_id=q.target_node_id,
             node_name=q.node_name,
+            answered=q.answer is not None,
+        )
+        for q in questions
+    ]
+
+
+@router.post("/today/generate", response_model=list[ReflectionQuestion])
+async def generate_today_questions(
+    user_id: str = Depends(get_current_user_id),
+    reflection_service: ReflectionService = Depends(get_reflection_service),
+):
+    async with _generate_lock(user_id):
+        existing = await reflection_service.get_today_questions(user_id)
+        if existing:
+            questions = existing
+        else:
+            questions = await reflection_service.generate_questions(user_id)
+    return [
+        ReflectionQuestion(
+            id=q.id,
+            question=q.question,
+            target_node_id=q.target_node_id,
+            node_name=q.node_name,
+            answered=q.answer is not None,
         )
         for q in questions
     ]

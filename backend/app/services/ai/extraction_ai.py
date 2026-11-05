@@ -2,7 +2,11 @@ import json
 
 from app.core.logger import get_logger
 from app.core.prompt_manager import prompt_manager
-from app.services.providers.base import LLM_ERROR_TYPES, degraded_result
+from app.services.providers.base import (
+    LLM_ERROR_TYPES,
+    degraded_result,
+    json_call_kwargs,
+)
 
 logger = get_logger(__name__)
 
@@ -11,7 +15,7 @@ class ExtractionMixin:
     async def extract_knowledge(self, text: str) -> dict:
         prompt = prompt_manager.get_extraction_prompt(text)
         try:
-            response = await self.llm.chat(prompt)
+            response = await self.llm.chat(prompt, **json_call_kwargs())
         except LLM_ERROR_TYPES as exc:
             logger.warning("知识抽取调用 LLM 失败，触发降级：%s", exc)
             return degraded_result(
