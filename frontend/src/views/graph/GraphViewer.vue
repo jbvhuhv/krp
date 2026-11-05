@@ -164,6 +164,54 @@ function goToNotes() {
   router.push({ name: 'Notes', query: { upload: '1' } })
 }
 
+/* ===== 导出思维导图（Word） ===== */
+const exporting = ref(false)
+
+async function readErrorDetail(blob) {
+  try {
+    const parsed = JSON.parse(await blob.text())
+    return parsed?.detail || ''
+  } catch {
+    return ''
+  }
+}
+
+async function handleExportMindmap() {
+  if (!userStore.isLoggedIn) {
+    userStore.openLoginModal()
+    return
+  }
+  if (!displayBooks.value.length) {
+    ElMessage.warning('书架还是空的，先上传一篇笔记再导出')
+    return
+  }
+  exporting.value = true
+  try {
+    const blob = await graphApi.exportMindmap()
+    // 后端报错时响应体依然是 JSON，只是被当成 blob 收下了
+    if (blob?.type?.includes('application/json')) {
+      const detail = await readErrorDetail(blob)
+      ElMessage.error(detail || '导出失败，请稍后重试')
+      return
+    }
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `知识思维导图-${new Date().toISOString().slice(0, 10)}.docx`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+    ElMessage.success('思维导图已导出，用 Word 打开即可')
+  } catch (error) {
+    const data = error?.response?.data
+    const detail = data instanceof Blob ? await readErrorDetail(data) : ''
+    ElMessage.error(detail || '导出失败，请稍后重试')
+  } finally {
+    exporting.value = false
+  }
+}
+
 /* ===== 示例数据一键体验 ===== */
 const bootstrapping = ref(false)
 
@@ -376,6 +424,24 @@ onMounted(async () => {
               <path d="M12 16V4m0 0L7 9m5-5l5 5M5 20h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
             </svg>
             <span>分享到广场</span>
+          </button>
+          <button
+            class="shelf-export-btn"
+            :disabled="exporting"
+            title="把整个书架导出成 Word 思维导图"
+            @click="handleExportMindmap"
+          >
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+              <path
+                d="M12 3v11m0 0l4-4m-4 4l-4-4M5 20h14"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+            <span>{{ exporting ? '导出中…' : '导出思维导图' }}</span>
           </button>
         </div>
       </header>

@@ -83,6 +83,9 @@
   display: flex;
   align-items: center;
   gap: 12px;
+  /* 书架操作变多后，窄屏挤成一行会溢出，允许换行并保持右对齐 */
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .shelf-del-btn {
@@ -155,11 +158,41 @@
   transform: translateY(-1px);
 }
 
+/* 导出思维导图：紫色系与「分享到广场」的天蓝区分开，避免两个主按钮抢注意力 */
+.shelf-export-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 18px;
+  border: 1px solid rgba(167, 139, 250, 0.32);
+  border-radius: 10px;
+  background: rgba(139, 92, 246, 0.08);
+  color: #c4b5fd;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  backdrop-filter: blur(8px);
+}
+
+.shelf-export-btn:hover:not(:disabled) {
+  background: rgba(139, 92, 246, 0.18);
+  border-color: rgba(167, 139, 250, 0.55);
+  color: #ddd6fe;
+  box-shadow: 0 0 20px rgba(139, 92, 246, 0.25);
+  transform: translateY(-1px);
+}
+
+.shelf-export-btn:disabled {
+  opacity: 0.6;
+  cursor: progress;
+  transform: none;
+}
+
 .shelf-content {
   position: relative;
   z-index: 1;
 }
-
 .shelf-row {
   margin-bottom: 8px;
 }

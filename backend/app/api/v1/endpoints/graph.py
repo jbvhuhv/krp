@@ -1,7 +1,9 @@
 import random
-from datetime import datetime, timedelta, timezone
+import re
+from datetime import date, datetime, timedelta, timezone
+from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from neo4j.exceptions import ServiceUnavailable
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,6 +13,7 @@ from app.core.logger import get_logger
 from app.core.prompt_manager import prompt_manager
 from app.models.note import Note
 from app.models.reflection import NodeView
+from app.models.user import User
 from app.schemas.graph import (
     BookOut,
     BooksResponse,
@@ -32,6 +35,7 @@ from app.schemas.graph import (
 from app.services.ai_service import AIService
 from app.services.graph.constants import NODE_TYPE_BOOK, NODE_TYPE_KNOWLEDGE
 from app.services.graph_service import GraphService
+from app.services.mindmap_export import build_book_forest, render_docx
 
 router = APIRouter()
 logger = get_logger(__name__)
@@ -110,6 +114,61 @@ async def get_books(
     except ServiceUnavailable:
         return BooksResponse(items=[])
     return BooksResponse(items=[BookOut(**b) for b in books])
+
+
+@router.get("/export/mindmap")
+async def export_mindmap(
+    book_id: str | None = Query(None, description="只导出指定知识书；不传则导出整个书架"),
+    user_id: str = Depends(get_current_user_id),
+    graph_service: GraphService = Depends(get_graph_service),
+    db: AsyncSession = Depends(get_db),
+):
+    """把知识书架导出成 Word 思维导图。
+
+    一次取全部节点在内存里建树，而不是每本书查一次：书架动辄几十本书，
+    逐本 get_tree 会把 N 次图查询叠加到一次下载上。
+    """
+    try:
+        nodes = await graph_service.get_all_nodes(user_id)
+    except ServiceUnavailable as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="图谱服务暂时不可用，请稍后重试",
+        ) from exc
+
+    forest = build_book_forest(nodes, book_id)
+    if forest is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="知识书不存在")
+
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    owner_label = (user.nickname or "").strip() if user else ""
+
+    today = date.today()
+    content = render_docx(
+        books=forest,
+        owner_label=owner_label or "同学",
+        generated_at=today,
+    )
+
+    if book_id and forest:
+        stem = f"知识思维导图-{forest[0]['name']}-{today.isoformat()}"
+    else:
+        stem = f"知识思维导图-{today.isoformat()}"
+    # 文件名里的 \ / : * ? 等字符在 Windows 上会被拒绝写盘
+    filename = re.sub(r'[\\/:*?"<>|\r\n]', "_", stem) + ".docx"
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={
+            "Content-Disposition": (
+                f"attachment; filename=\"knowledge-mindmap-{today.isoformat()}.docx\"; "
+                f"filename*=UTF-8''{quote(filename)}"
+            ),
+            # 让前端能读到文件名（跨域/代理场景下默认只暴露少数响应头）
+            "Access-Control-Expose-Headers": "Content-Disposition",
+        },
+    )
 
 
 @router.get("/tree/{book_id}", response_model=TreeResponse)

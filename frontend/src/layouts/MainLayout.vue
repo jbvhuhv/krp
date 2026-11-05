@@ -82,28 +82,8 @@ function handleCommand(command) {
     handleLogout()
   } else if (command === 'nickname') {
     openNicknameDialog()
-  } else if (command === 'export') {
-    exportMyData()
   } else if (command === 'deleteAccount') {
     confirmDeleteAccount()
-  }
-}
-
-async function exportMyData() {
-  try {
-    const data = await authApi.exportMyData()
-    const blob = new Blob([JSON.stringify(data, null, 2)], {
-      type: 'application/json',
-    })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `krp-my-data-${new Date().toISOString().slice(0, 10)}.json`
-    a.click()
-    URL.revokeObjectURL(url)
-    ElMessage.success('数据导出成功')
-  } catch {
-    ElMessage.error('数据导出失败，请稍后重试')
   }
 }
 
@@ -402,10 +382,6 @@ watch(
                 <el-dropdown-item command="nickname">
                   <el-icon><EditPen /></el-icon>
                   修改昵称
-                </el-dropdown-item>
-                <el-dropdown-item command="export">
-                  <el-icon><Download /></el-icon>
-                  导出我的数据
                 </el-dropdown-item>
                 <el-dropdown-item command="deleteAccount" divided>
                   <el-icon><Delete /></el-icon>

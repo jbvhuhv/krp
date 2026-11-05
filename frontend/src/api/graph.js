@@ -9,6 +9,13 @@ export const graphApi = {
   },
   getBooks: () => request.get('/graph/books'),
   getTree: (bookId) => request.get(`/graph/tree/${bookId}`),
+  // 导出思维导图：后端直接回 .docx 字节流，bookId 为空时导整个书架
+  exportMindmap: (bookId) =>
+    request.get('/graph/export/mindmap', {
+      params: bookId ? { book_id: bookId } : {},
+      responseType: 'blob',
+      timeout: 60000,
+    }),
   getSubjectStats: () => request.get('/graph/subject-stats'),
   getStudyProfile: () => request.get('/graph/study-profile'),
   createNode: (data) => request.post('/graph/nodes', data),
