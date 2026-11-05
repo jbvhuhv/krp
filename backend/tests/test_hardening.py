@@ -272,31 +272,6 @@ async def test_delete_me_removes_all_user_data(client, test_db):
         app.dependency_overrides.pop(get_current_user, None)
 
 
-async def test_export_me_returns_json_payload(client, test_db):
-    from app.api.deps import get_current_user
-    from app.main import app
-    from app.models.note import Note
-    from app.models.user import User
-
-    user = User(id="exp-user-1", phone="13900002222", nickname="导出测试")
-    test_db.add(user)
-    test_db.add(
-        Note(id="exp-note-1", user_id="exp-user-1", title="导出笔记", content="正文")
-    )
-    await test_db.commit()
-
-    app.dependency_overrides[get_current_user] = lambda: user
-    try:
-        resp = await client.get("/api/v1/auth/me/export")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["user"]["id"] == "exp-user-1"
-        assert len(data["notes"]) == 1
-        assert data["notes"][0]["title"] == "导出笔记"
-    finally:
-        app.dependency_overrides.pop(get_current_user, None)
-
-
 async def test_sms_without_channel_is_explicitly_503(client, monkeypatch):
     """没接短信通道时必须如实 503，而不是「发送成功」但用户永远收不到。"""
     from app.core.config import settings

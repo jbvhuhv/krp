@@ -1,6 +1,6 @@
 import re
 import secrets
-from datetime import date, datetime
+from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
@@ -220,80 +220,6 @@ async def update_me(
         student_id=current_user.student_id,
         nickname=current_user.nickname,
     )
-
-
-@router.get("/me/export")
-async def export_my_data(
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """数据可携带权（个保法第 45 条）：导出用户本人全部数据的 JSON。"""
-    from app.models.avatar import Avatar, ChatMessage
-    from app.models.community import CommunityComment, CommunityPost
-    from app.models.note import Note
-    from app.models.notification import Notification
-    from app.models.pet import Pet, PetMessage
-    from app.models.reflection import (
-        NodeMasteryOverride,
-        NodeView,
-        ReflectionRecord,
-        ReflectionSchedule,
-    )
-
-    uid = current_user.id
-
-    def _jsonable(value):
-        """保证导出物是合法 JSON：时间转 ISO 字符串，JSON 列原样保留。"""
-        if isinstance(value, (datetime, date)):
-            return value.isoformat()
-        if isinstance(value, bytes):
-            return value.decode("utf-8", "replace")
-        return value
-
-    async def _all(model, condition=None):
-        stmt = select(model).where(condition if condition is not None else model.user_id == uid)
-        rows = (await db.execute(stmt)).scalars().all()
-        return [
-            {c.name: _jsonable(getattr(r, c.name)) for c in model.__table__.columns}
-            for r in rows
-        ]
-
-    posts = await _all(CommunityPost)
-    pet = await _all(Pet)
-    # ChatMessage 挂的是 avatar_id，没有 user_id，需先按用户的数字人筛选
-    avatar_ids = (
-        await db.execute(select(Avatar.id).where(Avatar.user_id == uid))
-    ).scalars().all()
-    avatar_messages = (
-        await _all(ChatMessage, ChatMessage.avatar_id.in_(avatar_ids))
-        if avatar_ids
-        else []
-    )
-    return {
-        "user": {
-            "id": current_user.id,
-            "phone": current_user.phone,
-            "student_id": current_user.student_id,
-            "nickname": current_user.nickname,
-            "created_at": current_user.created_at.isoformat()
-            if current_user.created_at
-            else None,
-        },
-        "notes": await _all(Note),
-        "reflection_records": await _all(ReflectionRecord),
-        "reflection_schedules": await _all(ReflectionSchedule),
-        # 行为埋点与演示模式下的掌握度覆盖层也属于本人数据，导出要带上
-        "node_views": await _all(NodeView),
-        "node_mastery_overrides": await _all(NodeMasteryOverride),
-        "pets": pet,
-        "pet_messages": await _all(PetMessage),
-        "avatars": await _all(Avatar),
-        "avatar_messages": avatar_messages,
-        "community_posts": posts,
-        "community_comments": await _all(CommunityComment),
-        "notifications": await _all(Notification),
-        "exported_at": date.today().isoformat(),
-    }
 
 
 @router.delete("/me", status_code=status.HTTP_200_OK)
