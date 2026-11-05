@@ -756,3 +756,104 @@
 .cover-remove:hover {
   background: #ef4444;
 }
+
+/* ===== 新增：排序下拉 / 上传入口 / 封面改名按钮 / 空态示例按钮 ===== */
+.shelf-sort {
+  width: 132px;
+}
+
+.shelf-sort .el-input__wrapper {
+  background: rgba(15, 23, 42, 0.72);
+  box-shadow: 0 0 0 1px rgba(148, 163, 184, 0.25) inset;
+}
+
+.shelf-sort .el-input__inner {
+  color: #cbd5e1;
+  font-size: 12px;
+}
+
+.cover-rename-btn {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 26px;
+  height: 26px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 8px;
+  background: rgba(8, 12, 26, 0.62);
+  color: #e2e8f0;
+  cursor: pointer;
+  z-index: 4;
+  transition: all 0.18s ease;
+}
+
+.book-card:hover .cover-rename-btn,
+.cover-rename-btn:focus-visible {
+  display: inline-flex;
+}
+
+.cover-rename-btn:hover {
+  background: rgba(6, 182, 212, 0.28);
+  border-color: rgba(6, 182, 212, 0.55);
+  color: #67e8f9;
+}
+
+.shelf-empty-demo {
+  margin-top: 14px;
+  background: transparent;
+  border: 1px solid rgba(6, 182, 212, 0.4);
+  color: #67e8f9;
+  box-shadow: none;
+}
+
+.shelf-empty-demo:hover {
+  background: rgba(6, 182, 212, 0.12);
+}
+
+.shelf-empty-demo:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.shelf-empty-hint {
+  margin: 10px 0 0;
+  color: #8b949e;
+  font-size: 12px;
+}
+
+/* ===== 移动端：书架单列、头部操作换行、隐藏悬浮改名（触屏无 hover）===== */
+@media (max-width: 768px) {
+  .shelf-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .shelf-header-actions {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .shelf-sort {
+    width: 120px;
+  }
+
+  .shelf-row .el-col {
+    max-width: 100%;
+    flex: 0 0 50%;
+  }
+
+  .cover-rename-btn {
+    display: inline-flex;
+  }
+
+  .shelf-empty-cta,
+  .shelf-empty-demo {
+    width: 100%;
+    max-width: 320px;
+    justify-content: center;
+  }
+}

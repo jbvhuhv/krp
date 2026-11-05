@@ -21,6 +21,20 @@ const searchQuery = ref('')
 
 const sortBy = ref('newest')
 
+// 学科筛选：选项与卡片主题规则对齐；后端按快照 subject 众数过滤
+const SUBJECT_OPTIONS = [
+  '人工智能',
+  '计算机科学',
+  '计算机网络',
+  '数据结构与算法',
+  '数学',
+  '物理',
+  '化学',
+  '英语',
+  '经济管理',
+]
+const subjectFilter = ref('')
+
 
 // 学科主题：按内容关键词匹配配色与专属插画
 const THEME_RULES = [
@@ -59,12 +73,14 @@ function syncFromRoute() {
   const p = Number(route.query.page)
   page.value = Number.isFinite(p) && p > 0 ? p : 1
   sortBy.value = route.query.sort === 'hottest' ? 'hottest' : 'newest'
+  subjectFilter.value = String(route.query.subject || '')
 }
 
 function commitQuery() {
   const query = {}
   if (page.value > 1) query.page = String(page.value)
   if (sortBy.value && sortBy.value !== 'newest') query.sort = sortBy.value
+  if (subjectFilter.value) query.subject = subjectFilter.value
   router.replace({ path: '/community', query })
 }
 
@@ -80,6 +96,7 @@ async function loadPosts() {
       size: size.value,
       sort: sortBy.value,
     }
+    if (subjectFilter.value) params.subject = subjectFilter.value
 
     const data = await communityApi.listPosts(params)
     if (seq !== loadSeq) return
@@ -152,6 +169,13 @@ function handleSortChange(val) {
   loadPosts()
 }
 
+function handleSubjectChange(val) {
+  subjectFilter.value = val || ''
+  page.value = 1
+  commitQuery()
+  loadPosts()
+}
+
 function handlePageChange(p) {
   page.value = p
   commitQuery()
@@ -170,9 +194,11 @@ watch(
     const p = Number(route.query.page)
     const nextPage = Number.isFinite(p) && p > 0 ? p : 1
     const nextSort = route.query.sort === 'hottest' ? 'hottest' : 'newest'
-    if (nextPage === page.value && nextSort === sortBy.value) return
+    const nextSubject = String(route.query.subject || '')
+    if (nextPage === page.value && nextSort === sortBy.value && nextSubject === subjectFilter.value) return
     page.value = nextPage
     sortBy.value = nextSort
+    subjectFilter.value = nextSubject
     loadPosts()
   },
 )
@@ -213,21 +239,40 @@ watch(
 
     <div class="toolbar">
       <span class="result-count">共 {{ total }} 个图谱</span>
-      <div class="sort-buttons">
-        <el-button
-          :type="sortBy === 'newest' ? 'primary' : 'default'"
+      <div class="toolbar-right">
+        <el-select
+          :model-value="subjectFilter"
+          class="subject-filter"
           size="small"
-          @click="handleSortChange('newest')"
+          clearable
+          filterable
+          placeholder="按学科筛选"
+          aria-label="按学科筛选"
+          @change="handleSubjectChange"
         >
-          最新
-        </el-button>
-        <el-button
-          :type="sortBy === 'hottest' ? 'primary' : 'default'"
-          size="small"
-          @click="handleSortChange('hottest')"
-        >
-          最热
-        </el-button>
+          <el-option
+            v-for="subject in SUBJECT_OPTIONS"
+            :key="subject"
+            :label="subject"
+            :value="subject"
+          />
+        </el-select>
+        <div class="sort-buttons">
+          <el-button
+            :type="sortBy === 'newest' ? 'primary' : 'default'"
+            size="small"
+            @click="handleSortChange('newest')"
+          >
+            最新
+          </el-button>
+          <el-button
+            :type="sortBy === 'hottest' ? 'primary' : 'default'"
+            size="small"
+            @click="handleSortChange('hottest')"
+          >
+            最热
+          </el-button>
+        </div>
       </div>
     </div>
 

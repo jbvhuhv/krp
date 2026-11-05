@@ -5,6 +5,7 @@ from app.api.v1.endpoints import (
     avatar,
     brainstorm,
     community,
+    demo,
     graph,
     notes,
     notifications,
@@ -21,4 +22,5 @@ api_router.include_router(reflection.router, prefix="/reflection", tags=["反思
 api_router.include_router(avatar.router, prefix="/avatar", tags=["数字分身"])
 api_router.include_router(notifications.router, prefix="/notifications", tags=["通知"])
 api_router.include_router(community.router, prefix="/community", tags=["知识广场"])
+api_router.include_router(demo.router, prefix="/demo", tags=["示例数据"])
 api_router.include_router(pet.router, prefix="/pet", tags=["宠物"])

@@ -24,6 +24,10 @@ const demoMode = import.meta.env.VITE_DEMO_MODE === 'true'
 const DEMO_PHONE = import.meta.env.VITE_DEMO_PHONE || ''
 const DEMO_CODE = import.meta.env.VITE_DEMO_CODE || ''
 
+// 验证码发送失败（后端 Redis / 短信服务未就绪时返回 503）：
+// 不能只弹一条一闪而过的 toast，要在表单里留下持久的解释与出路。
+const codeSendError = ref('')
+
 const loginForm = reactive({
   phone: isDebug ? DEBUG_PHONE : '',
   code: isDebug ? DEBUG_CODE : '',
@@ -46,6 +50,7 @@ watch(() => userStore.isLoginModalVisible, (visible) => {
   if (!visible) {
     loginForm.phone = isDebug ? DEBUG_PHONE : ''
     loginForm.code = isDebug ? DEBUG_CODE : ''
+    codeSendError.value = ''
     if (timer) {
       clearInterval(timer)
       timer = null
@@ -61,12 +66,18 @@ async function handleSendCode() {
     return
   }
   sendingCode.value = true
+  codeSendError.value = ''
   try {
     await userStore.sendCode(loginForm.phone)
     ElMessage.success('验证码已发送')
     startCountdown()
-  } catch {
-    // 错误已在拦截器中提示
+  } catch (error) {
+    if (error?.response?.status === 503) {
+      codeSendError.value = demoMode
+        ? '验证码服务暂未就绪（Redis 未连接）。演示环境下可直接使用下方演示账号登录体验'
+        : '验证码服务暂未就绪，请稍后重试；若持续出现，请联系部署方检查短信/Redis 配置'
+    }
+    // 其他错误已在拦截器中提示
   } finally {
     sendingCode.value = false
   }
@@ -125,8 +136,8 @@ onBeforeUnmount(() => {
         <div class="brand-icon">
           <el-icon size="24"><School /></el-icon>
         </div>
-        <h2>知识反思平台</h2>
-        <p>面向终身学习者的知识引擎</p>
+        <h2>宝藏库</h2>
+        <p>大学生知识管理与反思平台 · 面向终身学习者的知识引擎</p>
       </div>
     </template>
 
@@ -188,6 +199,11 @@ onBeforeUnmount(() => {
       <div class="tip-bar">
         <el-icon size="14"><InfoFilled /></el-icon>
         <span>未注册的手机号验证成功后将自动创建账号</span>
+      </div>
+
+      <div v-if="codeSendError" class="tip-bar demo-tip">
+        <el-icon size="14"><InfoFilled /></el-icon>
+        <span>{{ codeSendError }}</span>
       </div>
 
       <div v-if="demoMode" class="tip-bar demo-tip">

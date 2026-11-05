@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from neo4j.exceptions import ServiceUnavailable
-from sqlalchemy import case, delete, or_, select, update
+from sqlalchemy import case, delete, select, update
 from sqlalchemy import func as sa_func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -273,30 +273,37 @@ async def list_posts(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
     tag: str | None = Query(None, description="按标签过滤"),
-    q: str | None = Query(None, max_length=50, description="按标题/简介搜索"),
+    q: str | None = Query(None, max_length=50, description="按标题/简介/标签/学科搜索"),
+    subject: str | None = Query(None, max_length=50, description="按学科筛选"),
     sort: str = Query("newest", pattern="^(newest|hottest)$"),
     current_user_id: str | None = Depends(get_optional_user_id),
     db: AsyncSession = Depends(get_db),
 ):
-    query = select(CommunityPost).where(CommunityPost.is_public.is_(True))
+    base_query = select(CommunityPost).where(CommunityPost.is_public.is_(True))
     offset = (page - 1) * size
 
-    if q and q.strip():
-        # 关键词必须在服务端过滤：前端只取首页数据再本地过滤，等于只搜了最近 N 条。
-        # 这里去掉 LIKE 的通配符，避免用户输入 "%" 就命中全站。
-        keyword = q.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-        pattern = f"%{keyword}%"
-        query = query.where(
-            or_(
-                CommunityPost.title.ilike(pattern, escape="\\"),
-                CommunityPost.description.ilike(pattern, escape="\\"),
-            )
-        )
-
-    if tag:
-        # tags 为 JSON 列，SQLite 下 Unicode 转义导致 SQL contains 不可靠，故标签过滤在 Python 端完成
-        result = await db.execute(query)
-        all_posts = [p for p in result.scalars().all() if tag in (p.tags or [])]
+    q_kw = (q or "").strip().lower()
+    needs_python_filter = bool(q_kw) or bool(tag) or bool(subject)
+    if needs_python_filter:
+        # tags / subject 派生自 JSON 快照：SQLite 下中文被转义成 \uXXXX，
+        # SQL LIKE 不可靠，所以关键词、标签、学科任一存在时统一在 Python 端过滤。
+        # 本项目演示规模（几十帖）下全量加载成本可忽略；规模上来再换全文索引。
+        result = await db.execute(base_query)
+        all_posts = []
+        for post in result.scalars().all():
+            post_subject = _derive_snapshot_meta(post)[0] or ""
+            if subject and post_subject != subject:
+                continue
+            if tag and tag not in (post.tags or []):
+                continue
+            if q_kw:
+                tags_text = " ".join(str(t) for t in (post.tags or [])).lower()
+                haystack = (
+                    f"{post.title or ''}\n{post.description or ''}\n{tags_text}\n{post_subject}"
+                ).lower()
+                if q_kw not in haystack:
+                    continue
+            all_posts.append(post)
         if sort == "hottest":
             now = _utcnow()
             all_posts.sort(key=lambda p: _hot_score(p, now), reverse=True)
@@ -305,17 +312,17 @@ async def list_posts(
         total = len(all_posts)
         paged_posts = all_posts[offset : offset + size]
     else:
-        # 无标签过滤时下推到数据库，避免全表加载 + 内存分页
+        # 无过滤条件时下推到数据库，避免全表加载 + 内存分页
         total = (
             await db.execute(
-                select(sa_func.count()).select_from(query.order_by(None).subquery())
+                select(sa_func.count()).select_from(base_query.order_by(None).subquery())
             )
         ).scalar_one()
         if sort == "hottest":
             # 取互动量最高的有限候选集后按时间衰减重排，保证新鲜高互动内容优先
             candidates = (
                 await db.execute(
-                    query.order_by(
+                    base_query.order_by(
                         (
                             CommunityPost.likes_count * HOT_LIKE_WEIGHT
                             + CommunityPost.views_count
@@ -330,7 +337,7 @@ async def list_posts(
         else:
             paged_posts = (
                 await db.execute(
-                    query.order_by(CommunityPost.created_at.desc()).limit(size).offset(offset)
+                    base_query.order_by(CommunityPost.created_at.desc()).limit(size).offset(offset)
                 )
             ).scalars().all()
 

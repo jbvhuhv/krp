@@ -3,7 +3,7 @@ import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import echarts from '@/utils/echarts'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { notesApi, reflectionApi, graphApi } from '@/api'
+import { notesApi, reflectionApi, graphApi, demoApi } from '@/api'
 import { useUserStore } from '@/stores/user'
 import { formatDateTime as formatTime } from '@/utils/format'
 
@@ -13,8 +13,10 @@ const userStore = useUserStore()
 
 const notes = ref([])
 const loading = ref(false)
-const uploading = ref(false)
 const reExtractingId = ref('')
+// 批量上传计数：>0 表示仍有文件在传（区别于单个布尔，多文件并发时不互相覆盖）
+const uploadingCount = ref(0)
+const uploading = computed(() => uploadingCount.value > 0)
 
 const acceptTypes = '.md,.markdown,.txt,.pdf,.doc,.docx,.png,.jpg,.jpeg'
 
@@ -55,6 +57,13 @@ const formatMeta = {
 const searchKeyword = ref('')
 const statusFilter = ref('all')
 const tableCollapsed = ref(false)
+const uploadRef = ref()
+
+// 书架空态「去上传笔记」会带 ?upload=1 跳转过来：直接替用户点开文件选择框
+function openFilePicker() {
+  const input = uploadRef.value?.$el?.querySelector('input[type=file]')
+  if (input) input.click()
+}
 
 const filteredNotes = computed(() => {
   const kw = searchKeyword.value.trim().toLowerCase()
@@ -117,6 +126,13 @@ async function loadNotes() {
     if (target) openDetail(target)
   }
 }
+
+onMounted(() => {
+  // 从书架空态带着 ?upload=1 过来时，自动打开文件选择框（等列表加载完再点，避免被重渲染打断）
+  if (route.query.upload) {
+    setTimeout(openFilePicker, 400)
+  }
+})
 
 const detailVisible = ref(false)
 const detailLoading = ref(false)
@@ -188,7 +204,7 @@ function startPolling(noteId) {
         ElMessage.success(`《${data.title}》抽取完成，生成 ${data.nodes_count} 个知识点`)
         stopPolling(noteId)
       } else if (data.status === 'failed') {
-        ElMessage.warning(`《${data.title}》抽取失败：${data.error_message || '请检查 AI 配置'}`)
+        ElMessage.warning(`《${data.title}》抽取失败：${data.error_message || '内容无法识别，可重试或换个格式'}`)
         stopPolling(noteId)
       } else if (data.status === 'empty') {
         ElMessage.info(`《${data.title}》内容为空，未生成知识点`)
@@ -197,7 +213,13 @@ function startPolling(noteId) {
     } catch {
       stopPolling(noteId)
     }
-    if (attempts >= 45) stopPolling(noteId)
+    if (attempts >= 45) {
+      // 前端轮询到此为止（90 秒），但后端任务仍在跑：明确告诉用户
+      // 「还在处理、稍后刷新即可」，而不是让状态徽章永远停在"抽取中"却毫无解释。
+      stopPolling(noteId)
+      updateNoteInList({ id: noteId, poll_stopped: true })
+      ElMessage.info('AI 抽取耗时较长，仍在后台处理；稍后刷新本页即可看到结果')
+    }
   }, 2000)
   pollTimers.set(noteId, timer)
 }
@@ -208,17 +230,18 @@ function stopAllPolling() {
 }
 
 async function handleUpload(options) {
-
-  uploading.value = true
+  // 批量上传：el-upload multiple 后每个文件各触发一次 http-request，
+  // uploading 改为计数，避免多文件并发时按钮 loading 互相覆盖。
+  uploadingCount.value += 1
   try {
     const note = await notesApi.upload(options.file)
-    ElMessage.success('上传成功，AI 正在抽取知识点…')
+    ElMessage.success(`《${options.file.name}》上传成功，AI 正在抽取知识点…`)
     await loadNotes()
     if (note?.id) startPolling(note.id)
   } catch {
     // 错误已在拦截器中提示
   } finally {
-    uploading.value = false
+    uploadingCount.value = Math.max(0, uploadingCount.value - 1)
   }
 }
 
@@ -258,6 +281,29 @@ async function handleDelete(note) {
     await loadNotes()
   } catch {
     // 错误已在拦截器中提示
+  }
+}
+
+/* ===== 示例数据一键体验 ===== */
+const bootstrapping = ref(false)
+
+async function handleBootstrapDemo() {
+  bootstrapping.value = true
+  try {
+    const result = await demoApi.bootstrap()
+    if (result?.bootstrapped === false) {
+      ElMessage.info(result.message || '书架已有知识书，无需示例数据')
+      return
+    }
+    ElMessage.success(
+      `示例已生成（${result?.nodes_count ?? 0} 个知识点）：去「知识图谱」翻翻这本示例书，或到「反思中心」答两道题`,
+    )
+    await loadNotes()
+    loadTrend()
+  } catch {
+    // 错误已在拦截器中提示（图谱不可用等情况由后端返回明确文案）
+  } finally {
+    bootstrapping.value = false
   }
 }
 
@@ -630,14 +676,16 @@ onBeforeUnmount(() => {
         <p class="page-subtitle">上传学习笔记，系统自动抽取知识点构建图谱</p>
       </div>
       <el-upload
+        ref="uploadRef"
         :show-file-list="false"
         :accept="acceptTypes"
         :http-request="handleUpload"
         :disabled="uploading"
+        multiple
       >
         <el-button type="primary" :loading="uploading" size="large" round>
           <el-icon><Upload /></el-icon>
-          上传笔记
+          {{ uploading ? `正在上传（${uploadingCount}）` : '上传笔记' }}
         </el-button>
       </el-upload>
     </div>
@@ -842,7 +890,12 @@ onBeforeUnmount(() => {
                 size="small"
                 disable-transitions
               >
-                抽取失败
+                <el-tooltip
+                  :content="row.error_message || '内容无法识别，可重试或换个格式'"
+                  placement="top"
+                >
+                  <span class="failed-label">抽取失败</span>
+                </el-tooltip>
                 <el-icon
                   class="retry-mini"
                   :class="{ 'is-busy': reExtractingId === row.id }"
@@ -851,6 +904,21 @@ onBeforeUnmount(() => {
                   <Refresh />
                 </el-icon>
               </el-tag>
+              <el-tooltip
+                v-else-if="row.poll_stopped && (row.status === 'pending' || row.status === 'processing')"
+                content="AI 抽取耗时较长，仍在后台处理；稍后刷新本页即可看到结果"
+                placement="top"
+              >
+                <el-tag
+                  class="status-tag status-tag-plain"
+                  effect="plain"
+                  size="small"
+                  disable-transitions
+                >
+                  <i class="status-dot spinning"></i>
+                  后台处理中
+                </el-tag>
+              </el-tooltip>
               <el-tag
                 v-else
                 class="status-tag status-tag-plain"
@@ -909,7 +977,16 @@ onBeforeUnmount(() => {
               <el-icon size="36"><FolderOpened /></el-icon>
             </span>
             <p class="empty-title">暂无笔记</p>
-            <p class="empty-desc">点击右上角上传你的第一份学习笔记</p>
+            <p class="empty-desc">点击右上角上传你的第一份学习笔记，或先用示例数据体验完整流程</p>
+            <el-button
+              class="ghost-btn"
+              size="small"
+              round
+              :loading="bootstrapping"
+              @click="handleBootstrapDemo"
+            >
+              用示例数据体验
+            </el-button>
           </div>
         </template>
           </el-table>
@@ -965,7 +1042,7 @@ onBeforeUnmount(() => {
             type="error"
             :closable="false"
             show-icon
-            :title="detailNote.error_message || '抽取失败，请检查 AI 配置'"
+            :title="detailNote.error_message || '抽取失败：内容可能无法识别，可重试或换个格式上传'"
           />
           <el-alert
             v-else-if="detailNote.status === 'empty'"

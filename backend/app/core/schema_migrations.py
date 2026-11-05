@@ -74,6 +74,7 @@ _AVATAR_COLUMNS = {
 _REFLECTION_COLUMNS = {
     "weak_points": "TEXT",
     "resources": "TEXT",
+    "key_points": "TEXT",
     "reason": "TEXT",
     "generated_by": "VARCHAR(16)",
     "mastery_before": "FLOAT",

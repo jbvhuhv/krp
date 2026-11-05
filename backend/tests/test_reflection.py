@@ -523,3 +523,145 @@ async def test_get_mastery_trend_unifies_ema_with_graph(reflection_service, test
     # 时间线仍保留原始会话分
     assert trend["timeline"][-1]["score"] == 80.0
     assert "_last_time" not in node
+
+
+class TestExtraQuestion:
+    async def test_generate_extra_question_creates_record(
+        self, reflection_service, mock_graph_service, mock_ai_service
+    ):
+        mock_graph_service.get_node_detail = AsyncMock(return_value={
+            "id": "node-x", "name": "TCP 与 UDP", "summary": "传输层协议对比",
+        })
+
+        record = await reflection_service.generate_extra_question("user-1", "node-x")
+
+        assert record is not None
+        assert record.target_node_id == "node-x"
+        assert record.node_name == "TCP 与 UDP"
+        # 加练题同样要有「为什么是它」的说明
+        assert record.reason
+        mock_ai_service.generate_question.assert_awaited_once()
+
+    async def test_generate_extra_question_unknown_node(
+        self, reflection_service, mock_graph_service
+    ):
+        mock_graph_service.get_node_detail = AsyncMock(return_value=None)
+        assert await reflection_service.generate_extra_question("user-1", "missing") is None
+
+    async def test_generate_extra_question_daily_cap(
+        self, reflection_service, test_db, mock_graph_service
+    ):
+        """当日题目（含每日题）达到「每日题 + 加练上限」后不再生成。"""
+        from app.services.reflection_service import EXTRA_DAILY_LIMIT, MAX_QUESTIONS
+
+        mock_graph_service.get_node_detail = AsyncMock(return_value={
+            "id": "node-x", "name": "知识点", "summary": "",
+        })
+        now = datetime.utcnow()
+        for i in range(MAX_QUESTIONS + EXTRA_DAILY_LIMIT):
+            test_db.add(ReflectionRecord(
+                user_id="cap-user", question=f"q{i}",
+                target_node_id="node-x", node_name="知识点",
+                created_at=now,
+            ))
+        await test_db.commit()
+
+        assert await reflection_service.generate_extra_question("cap-user", "node-x") is None
+
+    async def test_evaluate_answer_returns_key_points(
+        self, reflection_service, test_db, mock_ai_service
+    ):
+        mock_ai_service.evaluate_answer = AsyncMock(return_value={
+            "concept_accuracy": 80.0,
+            "logic_completeness": 75.0,
+            "example_reasonableness": 70.0,
+            "weak_points": [],
+            "suggestion": "不错",
+            "resources": [],
+            "key_points": ["F=ma 是合外力与加速度的关系", "注意单位制"],
+        })
+        record = ReflectionRecord(
+            user_id="kp-user", question="什么是牛顿第二定律？",
+            target_node_id="n1", node_name="牛顿第二定律",
+        )
+        test_db.add(record)
+        await test_db.commit()
+
+        result = await reflection_service.evaluate_answer("kp-user", record.id, "F=ma")
+        assert result["key_points"] == ["F=ma 是合外力与加速度的关系", "注意单位制"]
+
+        # 重新打开同一道题（缓存分支）也能拿到参考要点
+        cached = await reflection_service.evaluate_answer("kp-user", record.id, "再答一次")
+        assert cached["already_answered"] is True
+        assert cached["key_points"] == ["F=ma 是合外力与加速度的关系", "注意单位制"]
+
+
+class TestExtraQuestion:
+    async def test_generate_extra_question_creates_record(
+        self, reflection_service, mock_graph_service, mock_ai_service
+    ):
+        mock_graph_service.get_node_detail = AsyncMock(return_value={
+            "id": "node-x", "name": "TCP 与 UDP", "summary": "传输层协议对比",
+        })
+
+        record = await reflection_service.generate_extra_question("user-1", "node-x")
+
+        assert record is not None
+        assert record.target_node_id == "node-x"
+        assert record.node_name == "TCP 与 UDP"
+        # 加练题同样要有「为什么是它」的说明
+        assert record.reason
+        mock_ai_service.generate_question.assert_awaited_once()
+
+    async def test_generate_extra_question_unknown_node(
+        self, reflection_service, mock_graph_service
+    ):
+        mock_graph_service.get_node_detail = AsyncMock(return_value=None)
+        assert await reflection_service.generate_extra_question("user-1", "missing") is None
+
+    async def test_generate_extra_question_daily_cap(
+        self, reflection_service, test_db, mock_graph_service
+    ):
+        """当日题目（含每日题）达到「每日题 + 加练上限」后不再生成。"""
+        from app.services.reflection_service import EXTRA_DAILY_LIMIT, MAX_QUESTIONS
+
+        mock_graph_service.get_node_detail = AsyncMock(return_value={
+            "id": "node-x", "name": "知识点", "summary": "",
+        })
+        now = datetime.utcnow()
+        for i in range(MAX_QUESTIONS + EXTRA_DAILY_LIMIT):
+            test_db.add(ReflectionRecord(
+                user_id="cap-user", question=f"q{i}",
+                target_node_id="node-x", node_name="知识点",
+                created_at=now,
+            ))
+        await test_db.commit()
+
+        assert await reflection_service.generate_extra_question("cap-user", "node-x") is None
+
+    async def test_evaluate_answer_returns_key_points(
+        self, reflection_service, test_db, mock_ai_service
+    ):
+        mock_ai_service.evaluate_answer = AsyncMock(return_value={
+            "concept_accuracy": 80.0,
+            "logic_completeness": 75.0,
+            "example_reasonableness": 70.0,
+            "weak_points": [],
+            "suggestion": "不错",
+            "resources": [],
+            "key_points": ["F=ma 是合外力与加速度的关系", "注意单位制"],
+        })
+        record = ReflectionRecord(
+            user_id="kp-user", question="什么是牛顿第二定律？",
+            target_node_id="n1", node_name="牛顿第二定律",
+        )
+        test_db.add(record)
+        await test_db.commit()
+
+        result = await reflection_service.evaluate_answer("kp-user", record.id, "F=ma")
+        assert result["key_points"] == ["F=ma 是合外力与加速度的关系", "注意单位制"]
+
+        # 重新打开同一道题（缓存分支）也能拿到参考要点
+        cached = await reflection_service.evaluate_answer("kp-user", record.id, "再答一次")
+        assert cached["already_answered"] is True
+        assert cached["key_points"] == ["F=ma 是合外力与加速度的关系", "注意单位制"]

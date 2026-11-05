@@ -50,13 +50,15 @@ EVALUATION_PROMPT = (
 补充约束：
 - weak_points 最多 3 条，每条不超过 20 字；
 - resources 最多 3 条，只列资料名称不列链接；
+- key_points：这道题的参考要点，3-5 条、每条不超过 30 字——学生答完能对照"正确理解长什么样"，而不是只看到分数；
 - 若学生回答为空或纯"不知道"，三个维度均给 0-10 分，weak_points 写 ["未作答"]。
 
 同时给出：
 - weak_points：薄弱点列表（字符串数组）
 - suggestion：改进建议（一段话）
 - resources：推荐补充资料（字符串数组）
+- key_points：参考要点（字符串数组）
 
 以 JSON 格式返回，不要包含其他内容：
-{{"concept_accuracy": 85, "logic_completeness": 70, "example_reasonableness": 60, "weak_points": ["薄弱点1"], "suggestion": "改进建议", "resources": ["资料1"]}}"""
+{{"concept_accuracy": 85, "logic_completeness": 70, "example_reasonableness": 60, "weak_points": ["薄弱点1"], "suggestion": "改进建议", "resources": ["资料1"], "key_points": ["要点1", "要点2"]}}"""
 )

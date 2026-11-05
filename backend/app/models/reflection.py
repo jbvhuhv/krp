@@ -34,6 +34,9 @@ class ReflectionRecord(Base):
     # 不落库的话，用户重新打开同一道题只能看到分数，看不到当初的分析。
     weak_points: Mapped[str | None] = mapped_column(Text, nullable=True)
     resources: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 评分时由模型一并生成的参考要点（JSON 数组字符串）：
+    # 学生答完能对照"正确理解长什么样"，而不是只看到一个分数。
+    key_points: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # 出题依据：为什么今天问这道题（弱信号解释），以及题目是否由模板兜底生成。
     # 不落库的话，前端只能干巴巴地甩一道题，用户不知道它和哪篇笔记/哪次问答有关。

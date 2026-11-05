@@ -748,3 +748,47 @@
   justify-content: center;
   padding: 24px 0;
 }
+
+/* ===== 学科筛选 ===== */
+.toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.subject-filter {
+  width: 140px;
+}
+
+.subject-filter .el-input__wrapper {
+  background: rgba(15, 23, 42, 0.72);
+  box-shadow: 0 0 0 1px rgba(148, 163, 184, 0.25) inset;
+}
+
+.subject-filter .el-input__inner {
+  color: #cbd5e1;
+  font-size: 12px;
+}
+
+/* ===== 移动端：工具栏换行、卡片单列 ===== */
+@media (max-width: 768px) {
+  .toolbar {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .toolbar-right {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .subject-filter {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .card-grid .el-col {
+    max-width: 100%;
+    flex: 0 0 100%;
+  }
+}

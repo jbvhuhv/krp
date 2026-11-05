@@ -126,6 +126,9 @@ def _generate_lock(user_id: str) -> asyncio.Lock:
 MASTERY_THRESHOLD = 60.0
 DAYS_THRESHOLD = 7
 MAX_QUESTIONS = 5
+# 每日反思题之外，允许针对单个知识点「再来一题」加练的上限——
+# 放开刷题是需求，但无上限会一次性烧穿模型额度，也给刷分留了口子。
+EXTRA_DAILY_LIMIT = 10
 
 WEIGHT_CONCEPT = 0.4
 WEIGHT_LOGIC = 0.35
@@ -374,6 +377,53 @@ class ReflectionService:
                 return existing
             return await self.generate_questions(user_id, max_questions=max_questions)
 
+    async def generate_extra_question(self, user_id: str, node_id: str) -> ReflectionRecord | None:
+        """针对单个知识点「再来一题」加练。
+
+        与每日反思题互不影响，但共享一个加练上限（EXTRA_DAILY_LIMIT）：
+        加练题也计入当日题目总数，超过「每日题 + 加练上限」就不再生成，
+        避免无限制刷题烧穿模型额度。返回 None 表示未生成（无此节点 / 超上限）。
+        """
+        async with _generate_lock(user_id):
+            node = None
+            try:
+                node = await self.graph_service.get_node_detail(
+                    user_id=user_id, node_id=node_id
+                )
+            except Exception:  # noqa: BLE001 - 图谱不可用时不能出题，静默降级
+                logger.warning("加练出题读取节点失败: node=%s", node_id, exc_info=True)
+            if not node:
+                return None
+
+            today_start, tomorrow_start = _local_day_bounds()
+            count_result = await self.db.execute(
+                select(sql_func.count(ReflectionRecord.id)).where(
+                    ReflectionRecord.user_id == user_id,
+                    ReflectionRecord.created_at >= today_start,
+                    ReflectionRecord.created_at < tomorrow_start,
+                )
+            )
+            asked_today = count_result.scalar() or 0
+            if asked_today >= MAX_QUESTIONS + EXTRA_DAILY_LIMIT:
+                return None
+
+            node_name = node.get("name") or "未知知识点"
+            question_text, generated_by = await self._make_question(
+                node_name, node.get("summary", "")
+            )
+            record = ReflectionRecord(
+                user_id=user_id,
+                question=question_text,
+                target_node_id=node_id,
+                node_name=node_name,
+                reason="针对「%s」的加练题" % node_name,
+                generated_by=generated_by,
+            )
+            self.db.add(record)
+            await self.db.commit()
+            await self.db.refresh(record)
+            return record
+
     async def evaluate_answer(
         self, user_id: str, question_id: str, answer: str, is_voice: bool = False
     ) -> dict:
@@ -415,6 +465,7 @@ class ReflectionService:
                 "weak_points": _load_list(record.weak_points),
                 "suggestion": record.feedback or "",
                 "resources": _load_list(record.resources),
+                "key_points": _load_list(record.key_points),
                 "already_answered": True,
             }
 
@@ -444,6 +495,7 @@ class ReflectionService:
         record.feedback = evaluation.get("suggestion", "")
         record.weak_points = _dump_list(evaluation.get("weak_points"))
         record.resources = _dump_list(evaluation.get("resources"))
+        record.key_points = _dump_list(evaluation.get("key_points"))
         record.mastery_score = weighted_score
         record.concept_accuracy = concept
         record.logic_completeness = logic
@@ -521,6 +573,7 @@ class ReflectionService:
             "weak_points": evaluation.get("weak_points", []),
             "suggestion": evaluation.get("suggestion", ""),
             "resources": evaluation.get("resources", []),
+            "key_points": evaluation.get("key_points", []),
             "mastery_synced": mastery_synced,
         }
 

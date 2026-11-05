@@ -3,7 +3,7 @@ import { ref, reactive, onMounted, nextTick, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useUserStore } from '@/stores/user'
-import { graphApi, notesApi } from '@/api'
+import { graphApi, notesApi, demoApi } from '@/api'
 import AddBookDialog from './components/AddBookDialog.vue'
 import PublishDialog from './components/PublishDialog.vue'
 
@@ -73,15 +73,29 @@ function bookSubject(book) {
   return 'KNOWLEDGE'
 }
 
-const displayBooks = computed(() =>
-  books.value
+const displayBooks = computed(() => {
+  const list = books.value
     .filter((b) => (b.node_count || 0) > 0 || !b.source_note_id)
     .map((b) => ({
       ...b,
       displayName: stripMd(b.name),
       subject: bookSubject(b),
-    })),
-)
+    }))
+  // 书多了以后平铺找书很费劲：支持按学科归类 / 按知识点规模排
+  if (sortKey.value === 'subject') {
+    list.sort((a, b) => a.subject.localeCompare(b.subject) || a.displayName.localeCompare(b.displayName))
+  } else if (sortKey.value === 'nodes') {
+    list.sort((a, b) => (b.node_count || 0) - (a.node_count || 0))
+  }
+  return list
+})
+
+// 书架排序：默认（后端按名称）/ 学科归类 / 知识点规模
+const sortKey = ref('default')
+
+function handleBootstrapDemoDone() {
+  loadGraph()
+}
 
 function openBook(bookId) {
   if (deleteMode.value || editingBookId.value) return
@@ -146,7 +160,28 @@ async function loadGraph(force = false) {
 }
 
 function goToNotes() {
-  router.push({ name: 'Notes' })
+  // 带 upload=1：笔记页挂载后自动打开文件选择框，少点一步
+  router.push({ name: 'Notes', query: { upload: '1' } })
+}
+
+/* ===== 示例数据一键体验 ===== */
+const bootstrapping = ref(false)
+
+async function handleBootstrapDemo() {
+  bootstrapping.value = true
+  try {
+    const result = await demoApi.bootstrap()
+    if (result?.bootstrapped === false) {
+      ElMessage.info(result.message || '书架已有知识书，无需示例数据')
+      return
+    }
+    ElMessage.success('示例已生成，点击书架上的《计算机网络 · 示例教材》开始体验')
+    await loadGraph()
+  } catch {
+    // 错误已在拦截器中提示（图谱不可用等情况由后端返回明确文案）
+  } finally {
+    bootstrapping.value = false
+  }
 }
 
 function openAddBook() {
@@ -295,6 +330,23 @@ onMounted(async () => {
           <p class="shelf-subtitle">{{ displayBooks.length }} 本书 · 点击翻开知识脉络</p>
         </div>
         <div class="shelf-header-actions">
+          <el-select
+            v-if="displayBooks.length > 2"
+            v-model="sortKey"
+            class="shelf-sort"
+            size="small"
+            aria-label="书架排序方式"
+          >
+            <el-option label="按名称排序" value="default" />
+            <el-option label="按学科归类" value="subject" />
+            <el-option label="按知识点数量" value="nodes" />
+          </el-select>
+          <button class="shelf-del-btn" @click="goToNotes">
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+              <path d="M12 16V4m0 0L7 9m5-5l5 5M9 20h10a1 1 0 0 0 1-1v-5M5 17a4 4 0 0 0 4 4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            <span>上传笔记</span>
+          </button>
           <button
             v-if="displayBooks.length"
             class="shelf-del-btn"
@@ -395,6 +447,17 @@ onMounted(async () => {
                   >
                     {{ book.displayName }}
                   </h3>
+                  <button
+                    v-if="editingBookId !== book.id && !deleteMode"
+                    class="cover-rename-btn"
+                    title="修改书名"
+                    aria-label="修改书名"
+                    @click.stop="startEditBook(book)"
+                  >
+                    <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+                      <path d="M4 20h4L19 9a2.4 2.4 0 0 0-3.4-3.4L4.6 16.6 4 20z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" />
+                    </svg>
+                  </button>
                   <div class="cover-meta">
                     <span class="cover-count">
                       <b>{{ book.node_count }}</b> 知识点
@@ -439,6 +502,18 @@ onMounted(async () => {
           <span>{{ needLogin ? '立即登录' : loadError ? '重新加载' : '去上传笔记' }}</span>
           <span class="cta-arrow">→</span>
         </button>
+        <button
+          v-if="!needLogin && !loadError"
+          class="shelf-empty-cta shelf-empty-demo"
+          :disabled="bootstrapping"
+          @click="handleBootstrapDemo"
+        >
+          <span>{{ bootstrapping ? '正在生成示例…' : '用示例数据体验' }}</span>
+          <span class="cta-arrow">→</span>
+        </button>
+        <p v-if="!needLogin && !loadError" class="shelf-empty-hint">
+          示例零等待：一键生成一本小教材，先看看反思与掌握度长什么样
+        </p>
       </div>
     </div>
 

@@ -23,6 +23,10 @@ class AnswerSubmit(BaseModel):
     is_voice: bool = False
 
 
+class ExtraQuestionRequest(BaseModel):
+    node_id: str
+
+
 class FeedbackOut(BaseModel):
     mastery_score: float
     concept_accuracy: float = 0.0
@@ -31,6 +35,8 @@ class FeedbackOut(BaseModel):
     weak_points: list[str] = []
     suggestion: str = ""
     resources: list[str] = []
+    # 这道题的参考要点：答完能对照"正确理解长什么样"，而不是只看到分数
+    key_points: list[str] = []
     # true 表示这道题此前已作答，本次返回的是缓存的评分（不会二次调用模型）
     already_answered: bool = False
     # false 表示评分已记录，但图谱里的掌握度没能同步（演示只读图谱 / 图库不可用）

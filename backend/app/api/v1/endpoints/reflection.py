@@ -4,6 +4,7 @@ from app.api.deps import get_current_user_id, get_reflection_service
 from app.core.exceptions import ServiceUnavailableException
 from app.schemas.reflection import (
     AnswerSubmit,
+    ExtraQuestionRequest,
     FeedbackOut,
     MasteryTrend,
     MasteryTrendItem,
@@ -56,6 +57,22 @@ async def generate_today_questions(
         _to_question_out(q)
         for q in questions
     ]
+
+
+@router.post("/questions/more", response_model=ReflectionQuestion)
+async def generate_extra_question(
+    payload: ExtraQuestionRequest,
+    user_id: str = Depends(get_current_user_id),
+    reflection_service: ReflectionService = Depends(get_reflection_service),
+):
+    """针对单个知识点「再来一题」：绕开每日反思题的固定额度，受每日加练上限约束。"""
+    record = await reflection_service.generate_extra_question(user_id, payload.node_id)
+    if record is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="未能生成加练题：知识点不存在，或今日加练额度已用完",
+        )
+    return _to_question_out(record)
 
 
 @router.post("/answer", response_model=FeedbackOut)

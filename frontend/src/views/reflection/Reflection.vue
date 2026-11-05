@@ -154,6 +154,33 @@ async function handleSubmit(questionId) {
   }
 }
 
+/* ===== 参考要点展示 / 「再来一题」加练 ===== */
+const kpExpanded = reactive({})
+const extraLoadingId = ref('')
+
+function toggleKeyPoints(questionId) {
+  kpExpanded[questionId] = !kpExpanded[questionId]
+}
+
+async function handleMoreQuestion(question) {
+  if (extraLoadingId.value) return
+  const nodeId = question.target_node_id
+  if (!nodeId) {
+    ElMessage.warning('这道题没有关联的知识点，暂时无法加练')
+    return
+  }
+  extraLoadingId.value = question.id
+  try {
+    const newQuestion = await reflectionApi.generateMore(nodeId)
+    questions.value = [...questions.value, newQuestion]
+    ElMessage.success(`已生成「${newQuestion.node_name || question.node_name}」的加练题`)
+  } catch {
+    // 404（加练额度用完 / 节点不存在）由拦截器统一提示，这里不再叠加报错
+  } finally {
+    extraLoadingId.value = ''
+  }
+}
+
 function setRadarRef(el, questionId) {
   if (el) radarRefs[questionId] = el
 }
@@ -220,7 +247,7 @@ function handleResize() {
 
 function handleVoice(questionId) {
   if (voiceInsecure.value) {
-    ElMessage.warning('麦克风仅在安全上下文可用，请通过 http://localhost:5173 访问（勿用局域网 IP）')
+    ElMessage.warning('当前页面不是 HTTPS，浏览器不允许网页使用麦克风。用 https 访问即可恢复语音输入，也可以直接打字作答')
     return
   }
   if (!voiceSupported.value || !recognition) {
@@ -489,6 +516,34 @@ onBeforeUnmount(() => {
                 <div v-if="feedbacks[q.id].suggestion" class="feedback-suggestion">
                   {{ feedbacks[q.id].suggestion }}
                 </div>
+                <!-- 参考要点：答完能对照"正确理解长什么样"，而不是只看到分数 -->
+                <div v-if="feedbacks[q.id].key_points?.length" class="feedback-keypoints">
+                  <button
+                    type="button"
+                    class="keypoints-toggle"
+                    @click="toggleKeyPoints(q.id)"
+                  >
+                    <el-icon :class="{ expanded: kpExpanded[q.id] }"><ArrowDown /></el-icon>
+                    参考要点（{{ feedbacks[q.id].key_points.length }} 条）
+                  </button>
+                  <ul v-show="kpExpanded[q.id]" class="keypoints-list">
+                    <li v-for="(point, pi) in feedbacks[q.id].key_points" :key="pi">
+                      {{ point }}
+                    </li>
+                  </ul>
+                </div>
+              </div>
+              <div class="feedback-more">
+                <el-button
+                  size="small"
+                  round
+                  :loading="extraLoadingId === q.id"
+                  @click="handleMoreQuestion(q)"
+                >
+                  <el-icon><MagicStick /></el-icon>
+                  这道题再来一题
+                </el-button>
+                <span class="feedback-more-hint">针对「{{ q.node_name || '该知识点' }}」再出一道反思题（每日加练有限额）</span>
               </div>
             </div>
           </div>

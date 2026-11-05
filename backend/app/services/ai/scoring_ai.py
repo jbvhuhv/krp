@@ -53,10 +53,12 @@ class ScoringMixin:
         result.setdefault("weak_points", [])
         result.setdefault("suggestion", "")
         result.setdefault("resources", [])
+        result.setdefault("key_points", [])
         # 模型偶尔把数组写成字符串（"1. xx 2. yy"），统一收敛成 list[str]，
         # 否则前端 v-for 会渲染成一串字符，落库时也会序列化出意外的形状。
         result["weak_points"] = _as_str_list(result["weak_points"])
         result["resources"] = _as_str_list(result["resources"])
+        result["key_points"] = _as_str_list(result["key_points"])[:5]
         if not isinstance(result["suggestion"], str):
             result["suggestion"] = str(result["suggestion"] or "")
         return result

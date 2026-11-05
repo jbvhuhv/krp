@@ -62,3 +62,9 @@ nul
 # 本地 AI 技能/工具（由 npx skills add 安装，非作品内容）
 .agents/
 skills-lock.json
+
+# pytest 本地临时目录
+.pytest_tmp*
+
+# pytest 本地临时目录
+.pytest_tmp*

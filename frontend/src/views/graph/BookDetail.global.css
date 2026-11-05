@@ -1754,3 +1754,20 @@
   color: #fbbf24;
   font-size: 11px;
 }
+
+/* ===== 移动端：双栏改上下堆叠，目录树限高 ===== */
+@media (max-width: 768px) {
+  .book-body-row .el-col {
+    flex: 0 0 100% !important;
+    max-width: 100% !important;
+    margin-bottom: 14px;
+  }
+
+  .panel-card {
+    max-height: 46vh;
+  }
+
+  .tree-scroll {
+    max-height: 34vh;
+  }
+}
