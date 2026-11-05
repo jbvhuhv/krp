@@ -165,7 +165,44 @@ function goToNotes() {
 }
 
 /* ===== 导出思维导图（Word） ===== */
+const exportVisible = ref(false)
+const exportTargets = ref([])
 const exporting = ref(false)
+
+const exportAllChecked = computed(
+  () =>
+    displayBooks.value.length > 0 &&
+    exportTargets.value.length === displayBooks.value.length,
+)
+const exportIndeterminate = computed(
+  () =>
+    exportTargets.value.length > 0 &&
+    exportTargets.value.length < displayBooks.value.length,
+)
+const exportNodeCount = computed(() => {
+  const selected = new Set(exportTargets.value)
+  return displayBooks.value
+    .filter((b) => selected.has(b.id))
+    .reduce((sum, b) => sum + (b.node_count || 0), 0)
+})
+
+function openExportDialog() {
+  if (!userStore.isLoggedIn) {
+    userStore.openLoginModal()
+    return
+  }
+  if (!displayBooks.value.length) {
+    ElMessage.warning('书架还是空的，先上传一篇笔记再导出')
+    return
+  }
+  // 默认全选：多数场景要的是整份书架，想挑几本再取消
+  exportTargets.value = displayBooks.value.map((b) => b.id)
+  exportVisible.value = true
+}
+
+function toggleExportAll(checked) {
+  exportTargets.value = checked ? displayBooks.value.map((b) => b.id) : []
+}
 
 async function readErrorDetail(blob) {
   try {
@@ -177,17 +214,13 @@ async function readErrorDetail(blob) {
 }
 
 async function handleExportMindmap() {
-  if (!userStore.isLoggedIn) {
-    userStore.openLoginModal()
-    return
-  }
-  if (!displayBooks.value.length) {
-    ElMessage.warning('书架还是空的，先上传一篇笔记再导出')
+  if (!exportTargets.value.length) {
+    ElMessage.warning('至少选择一本知识书')
     return
   }
   exporting.value = true
   try {
-    const blob = await graphApi.exportMindmap()
+    const blob = await graphApi.exportMindmap(exportTargets.value)
     // 后端报错时响应体依然是 JSON，只是被当成 blob 收下了
     if (blob?.type?.includes('application/json')) {
       const detail = await readErrorDetail(blob)
@@ -197,11 +230,15 @@ async function handleExportMindmap() {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `知识思维导图-${new Date().toISOString().slice(0, 10)}.docx`
+    a.download =
+      exportTargets.value.length === 1
+        ? `知识思维导图-${stripMd(books.value.find((b) => b.id === exportTargets.value[0])?.name || '')}-${new Date().toISOString().slice(0, 10)}.docx`
+        : `知识思维导图-${exportTargets.value.length}本-${new Date().toISOString().slice(0, 10)}.docx`
     document.body.appendChild(a)
     a.click()
     a.remove()
     URL.revokeObjectURL(url)
+    exportVisible.value = false
     ElMessage.success('思维导图已导出，用 Word 打开即可')
   } catch (error) {
     const data = error?.response?.data
@@ -428,8 +465,8 @@ onMounted(async () => {
           <button
             class="shelf-export-btn"
             :disabled="exporting"
-            title="把整个书架导出成 Word 思维导图"
-            @click="handleExportMindmap"
+            title="选择知识书，导出成 Word 思维导图"
+            @click="openExportDialog"
           >
             <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
               <path
@@ -596,6 +633,55 @@ onMounted(async () => {
       :raw-edges="rawEdges"
       :book-options="bookOptions"
     />
+
+    <el-dialog
+      v-model="exportVisible"
+      title="导出思维导图"
+      width="480px"
+      class="glass-dialog export-dialog"
+    >
+      <p class="export-hint">
+        Word 里是一棵从书名贯通到知识点的脉络树，可以直接打印或粘进复习资料。
+      </p>
+
+      <div class="export-toolbar">
+        <el-checkbox
+          :model-value="exportAllChecked"
+          :indeterminate="exportIndeterminate"
+          @change="toggleExportAll"
+        >
+          全选
+        </el-checkbox>
+        <span class="export-count">
+          已选 {{ exportTargets.length }} / {{ displayBooks.length }} 本 ·
+          {{ exportNodeCount }} 个知识点
+        </span>
+      </div>
+
+      <el-checkbox-group v-model="exportTargets" class="export-book-list">
+        <el-checkbox
+          v-for="book in displayBooks"
+          :key="book.id"
+          :value="book.id"
+          class="export-book-item"
+        >
+          <span class="export-book-name">{{ book.displayName }}</span>
+          <span class="export-book-meta">{{ book.node_count || 0 }} 个知识点</span>
+        </el-checkbox>
+      </el-checkbox-group>
+
+      <template #footer>
+        <el-button @click="exportVisible = false">取消</el-button>
+        <el-button
+          type="primary"
+          :loading="exporting"
+          :disabled="!exportTargets.length"
+          @click="handleExportMindmap"
+        >
+          {{ exporting ? '导出中…' : '导出 Word' }}
+        </el-button>
+      </template>
+    </el-dialog>
 
   </div>
 </template>

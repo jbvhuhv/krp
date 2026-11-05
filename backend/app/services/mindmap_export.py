@@ -24,6 +24,10 @@ from app.services.graph.constants import (
 
 # 中文文档统一用雅黑；不指定 eastAsia 时 Word 会用宋体回退，字号也会漂
 FONT = "微软雅黑"
+# 树形连线必须等宽：├ │ └ 的列宽固定，逐层嵌套才不会错位
+MONO_FONT = "Consolas"
+# 等宽字体下两个字符（"├ "）占的宽度，用来对齐摘要的悬挂缩进
+INDENT_STEP_CM = 0.41
 
 COLOR_TITLE = RGBColor(0x0F, 0x17, 0x2A)
 COLOR_BOOK = RGBColor(0x1E, 0x3A, 0x5F)
@@ -55,8 +59,15 @@ def _plain(text: str | None) -> str:
     return s
 
 
-def _set_run_font(run, size: float, *, bold: bool = False, color: RGBColor | None = None):
-    run.font.name = FONT
+def _set_run_font(
+    run,
+    size: float,
+    *,
+    bold: bool = False,
+    color: RGBColor | None = None,
+    font: str = FONT,
+):
+    run.font.name = font
     run.font.size = Pt(size)
     run.font.bold = bold
     if color is not None:
@@ -68,7 +79,8 @@ def _set_run_font(run, size: float, *, bold: bool = False, color: RGBColor | Non
         rfonts = OxmlElement("w:rFonts")
         # rFonts 在 rPr 里必须排第一，append 到末尾 Word 会判为非法
         rpr.insert(0, rfonts)
-    rfonts.set(qn("w:eastAsia"), FONT)
+    # 等宽字体只用于连线字符，中文仍走雅黑
+    rfonts.set(qn("w:eastAsia"), FONT if font == MONO_FONT else font)
 
 
 def _node_children(node_id: str, by_parent: dict[str, list[dict]], seen: set[str]) -> list[dict]:
@@ -93,12 +105,18 @@ def _count_nodes(children: list[dict]) -> int:
     return sum(1 + _count_nodes(c["children"]) for c in children)
 
 
-def build_book_forest(nodes: list[dict], book_id: str | None = None) -> list[dict] | None:
+def build_book_forest(
+    nodes: list[dict], book_ids: list[str] | str | None = None
+) -> list[dict] | None:
     """把扁平节点整理成「书 → 分类 / 知识点」的树。
 
-    book_id 为 None 时返回整个书架；指定但找不到时返回 None（接口据此返回 404），
-    与「找到了但知识书是空的」区分开。
+    book_ids 为空时返回整个书架；指定了但一本都没匹配上返回 None（接口据此 404），
+    与「选中了书但这本书没知识点」区分开。接受单个字符串是为了兼容旧调用。
     """
+    if isinstance(book_ids, str):
+        book_ids = [book_ids]
+    wanted = {bid for bid in (book_ids or []) if bid}
+
     by_parent: dict[str, list[dict]] = {}
     books: list[dict] = []
     for node in nodes:
@@ -111,7 +129,12 @@ def build_book_forest(nodes: list[dict], book_id: str | None = None) -> list[dic
                 by_parent.setdefault(parent_id, []).append(node)
 
     for children in by_parent.values():
-        children.sort(key=lambda n: (n.get("sort_order") if n.get("sort_order") is not None else 999999, n.get("name") or ""))
+        children.sort(
+            key=lambda n: (
+                n.get("sort_order") if n.get("sort_order") is not None else 999999,
+                n.get("name") or "",
+            )
+        )
 
     books.sort(key=lambda b: (b.get("name") or "").lower())
 
@@ -120,7 +143,7 @@ def build_book_forest(nodes: list[dict], book_id: str | None = None) -> list[dic
         bid = book.get("id")
         if not bid:
             continue
-        if book_id and bid != book_id:
+        if wanted and bid not in wanted:
             continue
         roots = _node_children(bid, by_parent, {bid})
         forest.append(
@@ -133,48 +156,56 @@ def build_book_forest(nodes: list[dict], book_id: str | None = None) -> list[dic
             }
         )
 
-    if book_id is not None and not forest:
+    if wanted and not forest:
         return None
     return forest
 
 
-def _write_children(doc, children: list[dict], depth: int):
-    """深度优先写出一棵子树：分类用 ◆，知识点用 ├/└ 树形连接符。"""
+def _write_children(doc, children: list[dict], depth: int, prefix: str = ""):
+    """深度优先写出一棵子树，连线从书名一路贯通到叶子。
+
+    prefix 携带祖先层的竖线（"│ " / "  "），每层固定两个等宽字符宽，
+    所以整棵树的脉络是连续的，而不是只有本级的一个连接符。
+    """
     total = len(children)
     for index, child in enumerate(children):
         last = index == total - 1
-        indent = Cm(0.4 if depth == 1 else 0.4 + 0.75 * (depth - 1))
         paragraph = doc.add_paragraph()
-        paragraph.paragraph_format.left_indent = indent
-        paragraph.paragraph_format.space_before = Pt(7 if depth == 1 else 1.5)
+        paragraph.paragraph_format.left_indent = Cm(0.3)
+        paragraph.paragraph_format.space_before = Pt(6 if depth == 1 else 1.2)
         paragraph.paragraph_format.space_after = Pt(0)
-        paragraph.paragraph_format.line_spacing = 1.3
-        # 分类标题别被拆到下一页末尾
+        paragraph.paragraph_format.line_spacing = 1.25
+        # 有子节点的行别被拆到下一页末尾，脉络断页会更难读
         paragraph.paragraph_format.keep_with_next = bool(child["children"])
 
-        if child["node_type"] == NODE_TYPE_CATEGORY:
-            marker = paragraph.add_run("◆ ")
-            _set_run_font(marker, 11, bold=True, color=COLOR_ACCENT)
-            name_run = paragraph.add_run(child["name"])
-            _set_run_font(name_run, 11.5, bold=True, color=COLOR_BOOK)
-        else:
-            connector = "└ " if last else "├ "
-            mark = paragraph.add_run(connector)
-            _set_run_font(mark, 10.5, color=COLOR_LINE)
-            name_run = paragraph.add_run(child["name"])
-            _set_run_font(name_run, 10.5, color=COLOR_BODY)
+        if prefix:
+            lead = paragraph.add_run(prefix)
+            _set_run_font(lead, 10.5, color=COLOR_LINE, font=MONO_FONT)
+        connector = paragraph.add_run("└ " if last else "├ ")
+        _set_run_font(connector, 10.5, color=COLOR_LINE, font=MONO_FONT)
+
+        is_category = child["node_type"] == NODE_TYPE_CATEGORY
+        name_run = paragraph.add_run(child["name"])
+        _set_run_font(
+            name_run,
+            11.5 if is_category else 10.5,
+            bold=is_category,
+            color=COLOR_BOOK if is_category else COLOR_BODY,
+        )
 
         if child["summary"]:
             note = doc.add_paragraph()
-            note.paragraph_format.left_indent = indent + Cm(0.42)
+            # 悬挂缩进对齐到名字起点：0.3 左边距 + 每层两个等宽字符
+            note.paragraph_format.left_indent = Cm(0.3 + INDENT_STEP_CM * depth + 0.12)
             note.paragraph_format.space_before = Pt(0)
             note.paragraph_format.space_after = Pt(1)
-            note.paragraph_format.line_spacing = 1.25
+            note.paragraph_format.line_spacing = 1.2
             note_run = note.add_run(child["summary"])
             _set_run_font(note_run, 9, color=COLOR_MUTED)
 
         if child["children"]:
-            _write_children(doc, child["children"], depth + 1)
+            # 不是最后一个兄弟，竖线要继续往下画
+            _write_children(doc, child["children"], depth + 1, prefix + ("  " if last else "│ "))
 
 
 def render_docx(*, books: list[dict], owner_label: str, generated_at: date) -> bytes:

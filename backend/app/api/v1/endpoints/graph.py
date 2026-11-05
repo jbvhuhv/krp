@@ -118,16 +118,21 @@ async def get_books(
 
 @router.get("/export/mindmap")
 async def export_mindmap(
-    book_id: str | None = Query(None, description="只导出指定知识书；不传则导出整个书架"),
+    book_id: str | None = Query(None, description="只导出指定知识书（单本，兼容旧参数）"),
+    book_ids: list[str] = Query(default=[], description="只导出选中的知识书，可多选"),
     user_id: str = Depends(get_current_user_id),
     graph_service: GraphService = Depends(get_graph_service),
     db: AsyncSession = Depends(get_db),
 ):
-    """把知识书架导出成 Word 思维导图。
+    """把知识书架导出成 Word 思维导图。不传书号则导出整个书架。
 
     一次取全部节点在内存里建树，而不是每本书查一次：书架动辄几十本书，
     逐本 get_tree 会把 N 次图查询叠加到一次下载上。
     """
+    wanted = [bid for bid in book_ids if bid]
+    if book_id and book_id not in wanted:
+        wanted.append(book_id)
+
     try:
         nodes = await graph_service.get_all_nodes(user_id)
     except ServiceUnavailable as exc:
@@ -136,9 +141,9 @@ async def export_mindmap(
             detail="图谱服务暂时不可用，请稍后重试",
         ) from exc
 
-    forest = build_book_forest(nodes, book_id)
+    forest = build_book_forest(nodes, wanted or None)
     if forest is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="知识书不存在")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="所选知识书不存在")
 
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
@@ -151,8 +156,10 @@ async def export_mindmap(
         generated_at=today,
     )
 
-    if book_id and forest:
+    if len(forest) == 1:
         stem = f"知识思维导图-{forest[0]['name']}-{today.isoformat()}"
+    elif forest:
+        stem = f"知识思维导图-{len(forest)}本-{today.isoformat()}"
     else:
         stem = f"知识思维导图-{today.isoformat()}"
     # 文件名里的 \ / : * ? 等字符在 Windows 上会被拒绝写盘
