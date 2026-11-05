@@ -45,7 +45,11 @@ def _patch_scheduler_deps(monkeypatch, sched, users, generate_side_effect):
     monkeypatch.setattr(sched, "get_graph_service", lambda: object())
 
     reflection_service = MagicMock()
-    reflection_service.generate_questions = AsyncMock(side_effect=generate_side_effect)
+    # 定时任务先查今天是否已有题，没有才走 ensure（服务层加锁 + 幂等）
+    reflection_service.get_today_questions = AsyncMock(return_value=[])
+    reflection_service.ensure_today_questions = AsyncMock(
+        side_effect=generate_side_effect
+    )
     monkeypatch.setattr(
         sched, "build_reflection_service", lambda d, ai, g: reflection_service
     )

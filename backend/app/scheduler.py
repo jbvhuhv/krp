@@ -55,7 +55,12 @@ async def _generate_and_notify(user_id: str) -> bool:
         notification_service = build_notification_service(db)
 
         try:
-            questions = await reflection_service.generate_questions(
+            # 先看今天有没有题：已经有题就不再重复出题、也不再重复推送提醒。
+            # 生成走 ensure_today_questions（服务层加锁），否则定时任务和用户手动
+            # 点「开始反思」并发时会各生成一套题，同一天同一知识点被问两遍。
+            if await reflection_service.get_today_questions(user_id):
+                return False
+            questions = await reflection_service.ensure_today_questions(
                 user_id, max_questions=settings.REFLECTION_DAILY_LIMIT
             )
         except Exception:

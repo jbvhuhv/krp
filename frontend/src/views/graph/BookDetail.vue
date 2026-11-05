@@ -1223,6 +1223,15 @@ watch(treeData, () => {
                     <span class="ledger-arrow">→</span>
                     <span class="ledger-to">{{ Math.round(entry.mastery_after) }}</span>
                   </span>
+                  <!-- 有改前值、没有改后值 = 本次评分算出来了但没写回图谱（只读演示模式） -->
+                  <span
+                    v-else-if="entry.mastery_before != null"
+                    class="ledger-delta is-unsynced"
+                  >
+                    <span class="ledger-from">{{ Math.round(entry.mastery_before) }}</span>
+                    <span class="ledger-arrow">→</span>
+                    <span class="ledger-unsynced">未写回</span>
+                  </span>
                   <span v-else class="ledger-delta is-historical">未留存前后值</span>
                   <span class="ledger-score">得分 {{ Math.round(entry.score || 0) }}</span>
                   <span v-if="entry.new_weight != null" class="ledger-weight">

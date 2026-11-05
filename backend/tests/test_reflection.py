@@ -320,23 +320,23 @@ class TestReflectionAPIGetToday:
         response = await client.get("/api/v1/reflection/today")
 
         assert response.status_code == 200
-        mock_reflection_service.generate_questions.assert_not_called()
+        mock_reflection_service.ensure_today_questions.assert_not_called()
 
     async def test_generate_today_generates_when_empty(
         self, client, mock_reflection_service
     ):
-        mock_reflection_service.get_today_questions = AsyncMock(return_value=[])
-        mock_reflection_service.generate_questions = AsyncMock(return_value=[])
+        mock_reflection_service.ensure_today_questions = AsyncMock(return_value=[])
 
         response = await client.post("/api/v1/reflection/today/generate")
 
         assert response.status_code == 200
-        mock_reflection_service.generate_questions.assert_called_once()
+        # 幂等 + 加锁都收在服务层，路由只负责调用（定时任务走同一入口）
+        mock_reflection_service.ensure_today_questions.assert_called_once()
 
-    async def test_generate_today_skips_when_existing(
+    async def test_generate_today_returns_existing(
         self, client, mock_reflection_service
     ):
-        mock_reflection_service.get_today_questions = AsyncMock(return_value=[
+        mock_reflection_service.ensure_today_questions = AsyncMock(return_value=[
             ReflectionRecord(
                 id="q-1",
                 user_id="test-user-0001",
@@ -345,12 +345,11 @@ class TestReflectionAPIGetToday:
                 node_name="牛顿第二定律",
             ),
         ])
-        mock_reflection_service.generate_questions = AsyncMock(return_value=[])
 
         response = await client.post("/api/v1/reflection/today/generate")
 
         assert response.status_code == 200
-        mock_reflection_service.generate_questions.assert_not_called()
+        assert response.json()[0]["id"] == "q-1"
 
 
 class TestReflectionAPISubmitAnswer:

@@ -51,6 +51,19 @@ def _load_list(value) -> list[str]:
     return [str(parsed)]
 
 
+def _iso_utc(dt: datetime | None) -> str | None:
+    """naive datetime 一律按 UTC 解释，输出带 Z 的 ISO 串。
+
+    直接 `.isoformat()` 会得到 "2026-11-05T03:56:31"（没有时区），
+    浏览器 `new Date(...)` 会把它当本地时间，溯源时间线整体偏 8 小时。
+    """
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.isoformat().replace("+00:00", "Z")
+
+
 def _local_day_bounds() -> tuple[datetime, datetime]:
     """按 settings.TIMEZONE_OFFSET_HOURS 切本地日界，返回 [今日0点, 明日0点) 的 naive UTC datetime。"""
     now_utc = datetime.now(timezone.utc)
@@ -61,49 +74,53 @@ def _local_day_bounds() -> tuple[datetime, datetime]:
 
 # 同一题目的并发提交串行化：SQLite 不支持 SELECT ... FOR UPDATE（见下方注释），
 # 单进程部署下用进程内锁兜底，避免同一份答案被评估多次、拿到多个不同分数。
-_ANSWER_LOCKS: dict[str, asyncio.Lock] = {}
+#
+# 键是 (事件循环 id, 业务键)：asyncio.Lock 绑定创建它的循环，跨循环复用会直接抛
+# 「bound to a different event loop」。缓存若不区分循环，进程内重启循环（测试、
+# 重载、部分 ASGI 服务器）后第一次加锁就炸。
+_ANSWER_LOCKS: dict[tuple[int, str], asyncio.Lock] = {}
 _ANSWER_LOCKS_MAX = 512
-_GENERATE_LOCKS: dict[str, asyncio.Lock] = {}
+_GENERATE_LOCKS: dict[tuple[int, str], asyncio.Lock] = {}
 _GENERATE_LOCKS_MAX = 256
 # 掌握度是「读旧值 → 加权 → 写回」，同一知识点被两道题并发评分时会丢更新。
 # 题目级锁管不到这种情况（题不同、节点相同），所以再按 (user, node) 加一把。
-_MASTERY_LOCKS: dict[str, asyncio.Lock] = {}
+_MASTERY_LOCKS: dict[tuple[int, str], asyncio.Lock] = {}
 _MASTERY_LOCKS_MAX = 1024
 
 
-def _mastery_lock(user_id: str, node_id: str) -> asyncio.Lock:
-    key = f"{user_id}:{node_id}"
-    lock = _MASTERY_LOCKS.get(key)
-    if lock is None:
-        if len(_MASTERY_LOCKS) >= _MASTERY_LOCKS_MAX:
-            for stale_key in [k for k, v in _MASTERY_LOCKS.items() if not v.locked()]:
-                _MASTERY_LOCKS.pop(stale_key, None)
-        lock = asyncio.Lock()
-        _MASTERY_LOCKS[key] = lock
+def _get_lock(
+    cache: dict[tuple[int, str], asyncio.Lock], max_size: int, key: str
+) -> asyncio.Lock:
+    loop_id = id(asyncio.get_running_loop())
+    cache_key = (loop_id, key)
+    lock = cache.get(cache_key)
+    if lock is not None:
+        return lock
+
+    if len(cache) >= max_size:
+        # 先清掉别的（已结束的）循环遗留的锁，再清当前循环里空闲的锁
+        for stale in [k for k in cache if k[0] != loop_id]:
+            cache.pop(stale, None)
+        if len(cache) >= max_size:
+            for stale, value in list(cache.items()):
+                if not value.locked():
+                    cache.pop(stale, None)
+
+    lock = asyncio.Lock()
+    cache[cache_key] = lock
     return lock
+
+
+def _mastery_lock(user_id: str, node_id: str) -> asyncio.Lock:
+    return _get_lock(_MASTERY_LOCKS, _MASTERY_LOCKS_MAX, f"{user_id}:{node_id}")
 
 
 def _answer_lock(user_id: str, question_id: str) -> asyncio.Lock:
-    key = f"{user_id}:{question_id}"
-    lock = _ANSWER_LOCKS.get(key)
-    if lock is None:
-        if len(_ANSWER_LOCKS) >= _ANSWER_LOCKS_MAX:
-            for stale_key in [k for k, v in _ANSWER_LOCKS.items() if not v.locked()]:
-                _ANSWER_LOCKS.pop(stale_key, None)
-        lock = asyncio.Lock()
-        _ANSWER_LOCKS[key] = lock
-    return lock
+    return _get_lock(_ANSWER_LOCKS, _ANSWER_LOCKS_MAX, f"{user_id}:{question_id}")
 
 
 def _generate_lock(user_id: str) -> asyncio.Lock:
-    lock = _GENERATE_LOCKS.get(user_id)
-    if lock is None:
-        if len(_GENERATE_LOCKS) >= _GENERATE_LOCKS_MAX:
-            for stale_key in [k for k, v in _GENERATE_LOCKS.items() if not v.locked()]:
-                _GENERATE_LOCKS.pop(stale_key, None)
-        lock = asyncio.Lock()
-        _GENERATE_LOCKS[user_id] = lock
-    return lock
+    return _get_lock(_GENERATE_LOCKS, _GENERATE_LOCKS_MAX, user_id)
 
 
 MASTERY_THRESHOLD = 60.0
@@ -305,6 +322,21 @@ class ReflectionService:
         )
         return list(result.scalars().all())
 
+    async def ensure_today_questions(
+        self, user_id: str, max_questions: int = MAX_QUESTIONS
+    ) -> list[ReflectionRecord]:
+        """幂等的「保证今天有题」：已有则原样返回，没有才生成。
+
+        这把锁必须放在服务层：APScheduler 的定时任务直接调服务、不经过路由，
+        锁留在路由层时「定时任务」和「用户点开始反思」会并发各生成一套题，
+        同一天同一知识点被问两遍。注意 asyncio.Lock 不可重入，调用方不要重复加锁。
+        """
+        async with _generate_lock(user_id):
+            existing = await self.get_today_questions(user_id)
+            if existing:
+                return existing
+            return await self.generate_questions(user_id, max_questions=max_questions)
+
     async def evaluate_answer(
         self, user_id: str, question_id: str, answer: str, is_voice: bool = False
     ) -> dict:
@@ -406,20 +438,32 @@ class ReflectionService:
                     new_mastery = (
                         old_mastery * old_weight + weighted_score * new_weight
                     )
-                    await self.graph_service.update_mastery(
-                        user_id=user_id,
-                        node_id=record.target_node_id,
-                        mastery=new_mastery,
-                    )
+                    # 「改前值」和「本次权重」在写回之前就是既定事实，先记账。
+                    # 只读图谱写不回去时，用户看到的是「40 → 未写回（本次权重 85%）」，
+                    # 而不是含糊的「未留存前后值」——后者会让人以为是老数据的问题。
                     mastery_before = round(old_mastery, 2)
-                    mastery_after = round(new_mastery, 2)
                     mastery_weight = round(new_weight, 4)
+                    try:
+                        await self.graph_service.update_mastery(
+                            user_id=user_id,
+                            node_id=record.target_node_id,
+                            mastery=new_mastery,
+                        )
+                        mastery_after = round(new_mastery, 2)
+                    except Exception:  # noqa: BLE001
+                        # 图谱只读（演示模式）或不可用：评分与「改前值」仍然有效，
+                        # 丢掉整次评分比「分数已记录、掌握度未同步」更伤用户。
+                        mastery_synced = False
+                        logger.warning(
+                            "掌握度回写失败，本次评分仍然保留: user=%s node=%s",
+                            user_id,
+                            record.target_node_id,
+                            exc_info=True,
+                        )
                 except Exception:  # noqa: BLE001
-                    # 图谱只读（演示模式）或不可用时，评分本身仍然有效：
-                    # 丢掉整次评分比「分数已记录、掌握度未同步」更伤用户。
                     mastery_synced = False
                     logger.warning(
-                        "掌握度回写失败，本次评分仍然保留: user=%s node=%s",
+                        "读取节点掌握度失败，本次评分仍然保留: user=%s node=%s",
                         user_id,
                         record.target_node_id,
                         exc_info=True,
@@ -504,13 +548,13 @@ class ReflectionService:
             entry["mastery"] = entry["mastery"] * old_weight + score * new_weight
 
             entry["history"].append({
-                "time": record.answered_at.isoformat() if record.answered_at else None,
+                "time": _iso_utc(record.answered_at),
                 "score": record.mastery_score,
             })
             if record.answered_at is not None:
                 entry["_last_time"] = record.answered_at
             timeline.append({
-                "time": record.answered_at.isoformat() if record.answered_at else None,
+                "time": _iso_utc(record.answered_at),
                 "node_id": node_id,
                 "node_name": record.node_name or "",
                 "score": record.mastery_score,
@@ -549,7 +593,7 @@ class ReflectionService:
         timeline = [
             {
                 "record_id": r.id,
-                "time": r.answered_at.isoformat() if r.answered_at else None,
+                "time": _iso_utc(r.answered_at),
                 "score": r.mastery_score,
                 "concept_accuracy": r.concept_accuracy,
                 "logic_completeness": r.logic_completeness,

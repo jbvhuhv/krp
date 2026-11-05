@@ -29,6 +29,7 @@ from app.services.graph.constants import (
     RELATED_TO,
     UNCLASSIFIED_SUBJECT,
 )
+from app.services.graph.stats import build_study_profile
 
 logger = get_logger(__name__)
 
@@ -296,6 +297,42 @@ class LocalGraphService:
     async def count_nodes_by_origin(self, user_id: str, origin: str) -> int:
         return sum(
             1 for n in self._data.visible_nodes(user_id) if n.get("origin") == origin
+        )
+
+    async def get_study_profile(self, user_id: str) -> dict:
+        """六维学习画像（只读版）。
+
+        这个方法必须实现：`__getattr__` 的兜底会把任何未实现的读方法变成
+        「不支持修改知识图谱」的 403——一个只读接口报这种错，比直接没有数据还难解释。
+        算法与 Neo4j 版共用 `build_study_profile`，保证两套后端分数一致。
+        """
+        knowledge = [
+            n
+            for n in self._data.visible_nodes(user_id)
+            if n.get("node_type") == NODE_TYPE_KNOWLEDGE
+        ]
+        if not knowledge:
+            return {"total": 0, "dimensions": []}
+
+        values = [float(n.get("mastery") or 0.0) for n in knowledge]
+        total = len(values)
+        reviewed = sum(
+            1
+            for n in knowledge
+            if float(n.get("mastery") or 0.0) > 0 or n.get("last_reviewed")
+        )
+        subjects = {
+            n.get("subject")
+            for n in knowledge
+            if n.get("subject") and n.get("subject") not in NOISE_SUBJECTS
+        }
+        return build_study_profile(
+            total=total,
+            avg_mastery=sum(values) / total,
+            proficient=sum(1 for v in values if v >= 80),
+            solid=sum(1 for v in values if v >= 60),
+            reviewed=reviewed,
+            subject_count=len(subjects),
         )
 
     # ---------- 读：检索（数字分身问答的降级路径） ----------

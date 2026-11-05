@@ -15,7 +15,7 @@ from app.schemas.reflection import (
     ScheduleUpdate,
 )
 from app.services.providers.base import AI_BUSY_MESSAGE
-from app.services.reflection_service import ReflectionService, _generate_lock
+from app.services.reflection_service import ReflectionService
 
 router = APIRouter()
 
@@ -50,12 +50,8 @@ async def generate_today_questions(
     user_id: str = Depends(get_current_user_id),
     reflection_service: ReflectionService = Depends(get_reflection_service),
 ):
-    async with _generate_lock(user_id):
-        existing = await reflection_service.get_today_questions(user_id)
-        if existing:
-            questions = existing
-        else:
-            questions = await reflection_service.generate_questions(user_id)
+    # 幂等 + 加锁都在服务层完成：定时任务也走同一入口，避免两边并发各生成一套题
+    questions = await reflection_service.ensure_today_questions(user_id)
     return [
         _to_question_out(q)
         for q in questions

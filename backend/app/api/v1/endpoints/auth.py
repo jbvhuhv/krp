@@ -78,9 +78,11 @@ async def send_code(payload: SendCodeRequest):
             detail="短信通道未接入，请使用演示账号登录",
         ) from None
     except sms_service.SmsSendFailed as exc:
-        # 投递失败要把验证码和频控一起回滚，否则用户 60 秒内无法重试
+        # 投递失败要把验证码、频控、当日计数一起回滚，否则用户 60 秒内无法重试，
+        # 连挂几次还会把当天额度烧完
         await _quiet_delete(code_key)
         await _quiet_delete(rate_key)
+        await _quiet_decr(daily_key)
         logger.warning("[SMS] 网关投递失败 phone=%s****%s err=%s", phone[:3], phone[-4:], exc)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -98,6 +100,20 @@ async def _quiet_delete(key: str) -> None:
         await redis_client.delete(key)
     except Exception:  # noqa: BLE001
         logger.warning("[SMS] 回滚缓存失败 key=%s", key)
+
+
+async def _quiet_decr(key: str) -> None:
+    """撤回一次「今日发送次数」，否则网关连挂 5 次会把用户当天额度直接烧完。
+
+    只回滚 rate 不回滚 daily 的话，用户会看到「今日发送次数已达上限」，
+    而其实一条短信都没发出去。
+    """
+    try:
+        value = await redis_client.decr(key)
+        if value is not None and int(value) <= 0:
+            await redis_client.delete(key)
+    except Exception:  # noqa: BLE001
+        logger.warning("[SMS] 回滚发送计数失败 key=%s", key)
 
 
 @router.post("/login", response_model=Token)
