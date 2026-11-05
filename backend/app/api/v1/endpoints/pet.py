@@ -90,9 +90,14 @@ async def get_pet_status(
     # 已收割的成长值经 tree_growth_consumed 扣除，保证同一批知识不被重复结算。
     total_nodes = sum(t.nodes_count for t in threads)
     earned_cycles = max(0, int(total_nodes)) // pet_service.KNOWLEDGE_FOR_FULL
-    progress, ready_cycles = pet_service.derive_growth(
-        total_nodes, pet.tree_growth_consumed or 0.0
-    )
+    # 钳制已消耗成长值：笔记数据被清理/重整后事实来源会缩水，
+    # 而 consumed 是只增账本，不钳制会让宠物永久「倒欠」历史轮次、树永远无法再成熟。
+    consumed_growth = pet.tree_growth_consumed or 0.0
+    max_consumed = float(earned_cycles) * 100.0
+    if consumed_growth > max_consumed:
+        consumed_growth = max_consumed
+        pet.tree_growth_consumed = consumed_growth
+    progress, ready_cycles = pet_service.derive_growth(total_nodes, consumed_growth)
     if (
         (pet.growth_cycles or 0) != earned_cycles
         or abs((pet.tree_growth or 0.0) - progress) > 1e-6
