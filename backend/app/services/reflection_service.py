@@ -64,6 +64,22 @@ _ANSWER_LOCKS: dict[str, asyncio.Lock] = {}
 _ANSWER_LOCKS_MAX = 512
 _GENERATE_LOCKS: dict[str, asyncio.Lock] = {}
 _GENERATE_LOCKS_MAX = 256
+# 掌握度是「读旧值 → 加权 → 写回」，同一知识点被两道题并发评分时会丢更新。
+# 题目级锁管不到这种情况（题不同、节点相同），所以再按 (user, node) 加一把。
+_MASTERY_LOCKS: dict[str, asyncio.Lock] = {}
+_MASTERY_LOCKS_MAX = 1024
+
+
+def _mastery_lock(user_id: str, node_id: str) -> asyncio.Lock:
+    key = f"{user_id}:{node_id}"
+    lock = _MASTERY_LOCKS.get(key)
+    if lock is None:
+        if len(_MASTERY_LOCKS) >= _MASTERY_LOCKS_MAX:
+            for stale_key in [k for k, v in _MASTERY_LOCKS.items() if not v.locked()]:
+                _MASTERY_LOCKS.pop(stale_key, None)
+        lock = asyncio.Lock()
+        _MASTERY_LOCKS[key] = lock
+    return lock
 
 
 def _answer_lock(user_id: str, question_id: str) -> asyncio.Lock:
@@ -304,20 +320,27 @@ class ReflectionService:
 
         old_mastery = 0.0
         if record.target_node_id:
-            node = await self.graph_service.get_node_detail(
-                user_id=user_id, node_id=record.target_node_id
-            )
-            if node:
-                old_mastery = float(node.get("mastery", 0.0))
+            # 单进程内串行化「读旧值→算新值→写回」，避免同节点并发评分互相覆盖。
+            # 多实例部署仍需在 Neo4j 侧做原子写（本项目的部署形态是单容器）。
+            async with _mastery_lock(user_id, record.target_node_id):
+                node = await self.graph_service.get_node_detail(
+                    user_id=user_id, node_id=record.target_node_id
+                )
+                if node:
+                    old_mastery = float(node.get("mastery", 0.0))
 
-            days_since_review = _days_since(node.get("last_reviewed")) if node else None
-            old_weight, new_weight = compute_mastery_weights(old_mastery, days_since_review)
-            new_mastery = old_mastery * old_weight + weighted_score * new_weight
-            await self.graph_service.update_mastery(
-                user_id=user_id,
-                node_id=record.target_node_id,
-                mastery=new_mastery,
-            )
+                days_since_review = (
+                    _days_since(node.get("last_reviewed")) if node else None
+                )
+                old_weight, new_weight = compute_mastery_weights(
+                    old_mastery, days_since_review
+                )
+                new_mastery = old_mastery * old_weight + weighted_score * new_weight
+                await self.graph_service.update_mastery(
+                    user_id=user_id,
+                    node_id=record.target_node_id,
+                    mastery=new_mastery,
+                )
 
         await self.db.commit()
         await self.db.refresh(record)

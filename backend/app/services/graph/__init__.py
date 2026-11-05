@@ -131,6 +131,9 @@ async def init_property_indexes(driver: AsyncDriver) -> None:
 
 
 class GraphService(CrudMixin, TreeMixin, VectorMixin, StatsMixin):
+    #: 支持向量检索（数字分身发布时才有必要回填 embedding）
+    supports_vector = True
+
     def __init__(self, driver: AsyncDriver):
         self.driver = driver
 

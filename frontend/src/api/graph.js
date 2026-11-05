@@ -10,6 +10,7 @@ export const graphApi = {
   getBooks: () => request.get('/graph/books'),
   getTree: (bookId) => request.get(`/graph/tree/${bookId}`),
   getSubjectStats: () => request.get('/graph/subject-stats'),
+  getStudyProfile: () => request.get('/graph/study-profile'),
   createNode: (data) => request.post('/graph/nodes', data),
   createCategory: (data) => request.post('/graph/categories', data),
   createKnowledge: (data) => request.post('/graph/knowledge', data),

@@ -12,6 +12,42 @@ from app.services.graph_service import GraphService
 
 logger = get_logger(__name__)
 
+# 抽取后立即向量化的节点上限与并发度。
+# embed 每个节点是一次上游 HTTP 调用，串行太慢、并发太高会被限流；
+# 上限兜底超大笔记的成本（超出的部分由发布回填异步补齐）。
+_EXTRACT_EMBED_LIMIT = 100
+_EXTRACT_EMBED_CONCURRENCY = 4
+
+
+async def _embed_nodes(
+    graph_service: GraphService, ai_service: AIService, user_id: str, nodes: list[dict]
+) -> int:
+    """为节点批量写入向量，返回成功条数。失败只记日志，绝不影响抽取主流程。"""
+    todo = [
+        n
+        for n in nodes
+        if f"{n.get('name', '')} {n.get('summary', '')}".strip()
+    ]
+    if not todo:
+        return 0
+    semaphore = asyncio.Semaphore(_EXTRACT_EMBED_CONCURRENCY)
+
+    async def _one(node: dict) -> bool:
+        text = f"{node.get('name', '')} {node.get('summary', '')}".strip()
+        try:
+            async with semaphore:
+                embedding = await ai_service.embed(text)
+            await graph_service.set_node_embedding(user_id, node["id"], embedding)
+            return True
+        except Exception as exc:  # noqa: BLE001 - 单节点向量化失败不拖垮整批
+            logger.warning(
+                "节点向量化失败 node_id=%s error=%s", node.get("id"), exc
+            )
+            return False
+
+    results = await asyncio.gather(*(_one(n) for n in todo))
+    return sum(1 for ok in results if ok)
+
 
 def public_error_message(exc: BaseException | None) -> str:
     """把内部异常翻译成可以展示给学生的文案。
@@ -246,6 +282,25 @@ class ExtractionService:
         await self.graph_service.write_extraction_result(
             user_id=user_id, note_id=note_id, result=result, book_title=book_title
         )
+
+        # 向量化放在抽取链路里而不是发布时：发布回填一次最多补 200 个且串行，
+        # 会让"分身答不出后半个图谱"。这里只补本次新节点，失败不影响抽取结果。
+        try:
+            fresh_nodes = await self.graph_service.get_nodes_missing_embedding_by_note(
+                user_id, note_id, limit=_EXTRACT_EMBED_LIMIT
+            )
+            if fresh_nodes:
+                embedded = await _embed_nodes(
+                    self.graph_service, self.ai_service, user_id, fresh_nodes
+                )
+                logger.info(
+                    "抽取后向量化完成 note_id=%s embedded=%d/%d",
+                    note_id, embedded, len(fresh_nodes),
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "抽取后向量化失败（不影响抽取结果）note_id=%s error=%s", note_id, exc
+            )
 
         categories = result.get("categories", [])
 

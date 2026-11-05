@@ -83,9 +83,10 @@
 | 后端 | FastAPI + uvicorn | 异步高性能，自动 OpenAPI 文档 |
 | 图数据库 | Neo4j 5.x | 知识图谱存储与关系查询（不可用时优雅降级） |
 | 关系数据库 | SQLite（开发）/ PostgreSQL 16（生产） | 用户、笔记、反思记录、社区帖子等结构化数据 |
-| 缓存 | Redis 7 | 验证码限流等缓存（可选；未配置时 `/auth/send-code` 返回 503，`DEBUG=true` + `ALLOW_DEV_LOGIN=true` 且手机号在 `DEV_LOGIN_PHONE_ALLOWLIST` 白名单内时，可用万能码于 `/auth/login` 旁路登录；登录失败计数在 Redis 不可用时自动降级为进程内计数） |
+| 缓存 | Redis 7 | 验证码、发送频控、登录失败计数（Redis 不可用时限流降级为进程内计数；验证码无法下发时 `/auth/send-code` 明确返回 503） |
+| 短信 | 外部网关（`SMS_WEBHOOK_URL`，JSON POST） | 未配置时明确 503，不假装发送成功；`DEBUG=true` + 白名单内手机号可用万能码登录 |
 | 异步任务 | FastAPI BackgroundTasks | 知识抽取等后台任务（进程内执行，非独立队列） |
-| AI 服务 | MaaS（华为云模型即服务） | LLM 知识抽取、问题生成、分身对话、Embedding |
+| AI 服务 | OpenAI 兼容协议的大模型服务（LLM_BASE_URL / LLM_MODEL 配置；兼容华为云 MaaS、通义、OpenAI 等任意兼容端点） | LLM 知识抽取、问题生成、分身对话、Embedding |
 | 图片识别 | 多模态视觉模型（OpenAI 兼容，OCR_* 配置） | 图片笔记识别为文本后汇入知识抽取链路 |
 | 向量存储 | Neo4j 5.x 原生向量索引 | 知识点 Embedding 与相似度检索（RAG） |
 | 容器化 | Docker Compose（可选 / 生产参考） | 本地开发无需 Docker：默认 SQLite + 本地 Neo4j |
@@ -311,7 +312,7 @@ npm run dev
 可部署到任意容器平台。
 
 **线上环境**：用 `docker-compose.prod.yml` 一条命令起全栈
-（应用容器 + Neo4j，图谱可写、支持上传笔记自动抽取），服务器初始化脚本见
+（应用容器 + Neo4j + Redis，图谱可写、支持上传笔记自动抽取），服务器初始化脚本见
 [`deploy/setup-server.sh`](deploy/setup-server.sh)（自动安装 Docker、2G swap、Caddy 反向代理与每日备份）。
 
 ```bash
@@ -409,7 +410,7 @@ docker run --rm -p 8000:8000 \
 |------|------|--------|
 | `MAAS_API_KEY` | MaaS 大模型 API Key | （需填入） |
 | `MAAS_BASE_URL` | MaaS 服务地址 | （需填入） |
-| `MAAS_MODEL` | LLM 模型名称 | pangu |
+| `MAAS_MODEL` | LLM 模型名称（`LLM_MODEL` 优先；实际部署为通义千问兼容端点） | pangu |
 | `MAAS_EMBEDDING_MODEL` | Embedding 模型名称 | bge-m3 |
 | `OCR_API_KEY` | 图片识别多模态模型 API Key（不填则图片笔记不可用） | （可选） |
 | `OCR_BASE_URL` | 图片识别服务地址（OpenAI 兼容） | （可选） |

@@ -23,8 +23,10 @@ class GraphSnapshotEdge(BaseModel):
 
 
 class GraphSnapshot(BaseModel):
-    nodes: list[GraphSnapshotNode] = []
-    edges: list[GraphSnapshotEdge] = []
+    # 发布内容由客户端构造，若无上限，一个恶意请求可让克隆者串行写几千次图库；
+    # 真实书籍抽取规模在几百节点量级，2000 已远超正常值。
+    nodes: list[GraphSnapshotNode] = Field(default=[], max_length=2000)
+    edges: list[GraphSnapshotEdge] = Field(default=[], max_length=5000)
 
 
 class PostCreate(BaseModel):

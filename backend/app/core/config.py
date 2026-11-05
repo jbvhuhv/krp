@@ -109,6 +109,15 @@ class Settings(BaseSettings):
     SMS_CODE_TTL: int = 300
     SMS_RATE_LIMIT_INTERVAL: int = 60
     SMS_DAILY_LIMIT: int = 5
+    # 真实短信通道：留空 = 未接入（此时 /auth/send-code 明确返回 503，而不是假装发送成功）。
+    # 填写一个接受 JSON POST 的网关地址即可对接阿里云/腾讯云/自建转发，
+    # 请求体形如 {"phone": "...", "code": "123456", "ttl": 300}，返回 2xx 视为成功。
+    SMS_WEBHOOK_URL: str = ""
+    SMS_WEBHOOK_TOKEN: str = ""
+    SMS_WEBHOOK_TIMEOUT: float = 5.0
+    # 开发模式下（DEBUG=true 且未配网关）允许把验证码直接写进后端日志，
+    # 便于本地/内网联调；生产必须保持 false。
+    SMS_DEBUG_LOG_FALLBACK: bool = False
     # 登录失败次数限制（同一手机号在窗口期内允许的最大失败次数）
     LOGIN_MAX_FAILURES: int = 10
     LOGIN_FAILURE_WINDOW_SECONDS: int = 600
@@ -127,6 +136,9 @@ class Settings(BaseSettings):
     # 演示数据自动引导：数据库/图谱为空时，自动灌入随仓库分发的演示数据（backend/demo/）。
     # 让"克隆即可运行、部署即有内容"成立；置 false 可关闭。已存在数据时绝不做任何改动。
     DEMO_BOOTSTRAP: bool = True
+    # 广场内容初筛的附加词表（英文逗号分隔）。内置基线见 app/core/moderation.py，
+    # 这里用于按学校/场景追加；命中即拒绝发布。
+    UGC_BLOCKED_WORDS: str = ""
 
     # 前端构建产物目录：存在 index.html 时由后端直接托管，实现单服务部署。
     # 留空则自动探测 FRONTEND_DIST 常见位置（../frontend/dist、./frontend_dist）。

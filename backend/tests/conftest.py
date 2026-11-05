@@ -109,6 +109,8 @@ def mock_graph_service():
     service.count_nodes_by_origin = AsyncMock(return_value=0)
     service.delete_node = AsyncMock(return_value=True)
     service.delete_subtree = AsyncMock(return_value=1)
+    service.delete_all_nodes = AsyncMock(return_value=0)
+    service.delete_by_note_id = AsyncMock(return_value=0)
     service.update_mastery = AsyncMock(return_value={"id": "node-1", "mastery": 80.0})
     service.get_nodes_for_review = AsyncMock(return_value=[])
     return service

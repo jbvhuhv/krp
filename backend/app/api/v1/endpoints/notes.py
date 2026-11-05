@@ -166,6 +166,22 @@ async def upload_note(
             )
             text_content = ""
 
+        # 扫描版 PDF / 纯图片 Word 提取不到任何文字。以前会照常入库，
+        # 然后由抽取阶段判空失败——用户看到的是一条「失败」的笔记，还得自己猜原因。
+        # 这里直接拒绝并说清出路，同时不占用上传配额、不触发任何 LLM 调用。
+        if not text_content.strip():
+            try:
+                os.remove(saved_path)
+            except OSError:
+                pass
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "未能从文件中提取到文字，可能是扫描版 PDF 或纯图片文档。"
+                    "请上传可复制文本的版本，或把页面截图按图片上传（支持 OCR）。"
+                ),
+            )
+
     note = Note(
         id=note_id,
         user_id=user_id,

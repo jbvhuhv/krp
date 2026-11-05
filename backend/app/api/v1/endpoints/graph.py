@@ -20,6 +20,7 @@ from app.schemas.graph import (
     NodeSourceOut,
     NodeUpdate,
     NoteBrief,
+    StudyProfileResponse,
     SubjectStatsResponse,
     TreeNodeOut,
     TreeResponse,
@@ -402,6 +403,19 @@ async def get_subject_stats(
     except ServiceUnavailable:
         return SubjectStatsResponse(items=[])
     return SubjectStatsResponse(items=stats)
+
+
+@router.get("/study-profile", response_model=StudyProfileResponse)
+async def get_study_profile(
+    user_id: str = Depends(get_current_user_id),
+    graph_service: GraphService = Depends(get_graph_service),
+):
+    """学习画像六维：掌握度/熟练度/巩固度/复习覆盖/知识广度/知识体量。"""
+    try:
+        profile = await graph_service.get_study_profile(user_id)
+    except ServiceUnavailable:
+        return StudyProfileResponse(total=0, dimensions=[])
+    return StudyProfileResponse(**profile)
 
 
 @router.get("/{user_id}", response_model=GraphData)

@@ -10,6 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user_id, get_db, get_graph_service, get_optional_user_id
+from app.core import moderation
 from app.core.config import settings
 from app.core.logger import get_logger
 from app.core.upload_guard import read_upload_limited
@@ -42,6 +43,17 @@ from app.services.notification_service import NotificationService
 
 router = APIRouter()
 logger = get_logger(__name__)
+
+
+def _ensure_clean(*fields: str | None) -> None:
+    """广场内容初筛：命中内置/自定义违规词直接拒绝，不把命中词回显给用户。"""
+    hit = moderation.find_violation(*fields)
+    if hit:
+        logger.warning("[UGC] 内容命中违规词 word=%s", hit)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="内容包含违规信息，请修改后再发布",
+        )
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 MAX_COVER_SIZE = 5 * 1024 * 1024
@@ -425,6 +437,7 @@ async def create_post(
     user_id: str = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ):
+    _ensure_clean(payload.title, payload.description, " ".join(payload.tags or []))
     post = CommunityPost(
         user_id=user_id,
         title=payload.title,
@@ -579,6 +592,7 @@ async def create_comment(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="评论内容不能为空"
         )
+    _ensure_clean(content)
 
     parent_id = payload.parent_id
     if parent_id:

@@ -44,6 +44,13 @@ def mock_redis():
         yield r
 
 
+@pytest.fixture(autouse=True)
+def _sms_debug_channel(monkeypatch):
+    """测试环境没有短信网关：打开 DEBUG 日志通道，让 /send-code 走完整链路。"""
+    monkeypatch.setattr(settings, "SMS_WEBHOOK_URL", "")
+    monkeypatch.setattr(settings, "SMS_DEBUG_LOG_FALLBACK", True)
+
+
 async def test_send_code_success(client, mock_redis):
     resp = await client.post("/api/v1/auth/send-code", json={"phone": "13800138000"})
     assert resp.status_code == 200

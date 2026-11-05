@@ -35,6 +35,31 @@ class VectorMixin:
                 nodes.append(dict(record["n"]))
             return nodes
 
+    async def get_nodes_missing_embedding_by_note(
+        self, user_id: str, note_id: str, limit: int = 200
+    ) -> list[dict]:
+        """取某次抽取产生的、尚无向量的节点。
+
+        抽取链路用这个方法只为"本次新写的节点"补向量，
+        不会把历史遗留的无向量节点一起算进来（那是发布回填的职责）。
+        """
+        async with self.driver.session() as session:
+            result = await session.run(
+                f"""
+                MATCH (n:{NODE_LABEL} {{user_id: $user_id, source_note_id: $note_id}})
+                WHERE n.embedding IS NULL
+                RETURN n
+                LIMIT $limit
+                """,
+                user_id=user_id,
+                note_id=note_id,
+                limit=limit,
+            )
+            nodes = []
+            async for record in result:
+                nodes.append(dict(record["n"]))
+            return nodes
+
     async def vector_search(
         self,
         user_id: str,
@@ -84,6 +109,26 @@ class VectorMixin:
             return {cleaned}
         return {cleaned[i : i + 2] for i in range(len(cleaned) - 1)}
 
+    @classmethod
+    def keyword_score(cls, query: str, text: str) -> float:
+        """查询与文本的字面重叠度（0~1）。
+
+        单字查询（"力""熵"）走子串匹配：二元组永远匹配不上二元组，
+        否则用户问「什么是力」会得到 0 命中，而库里明明有「力学性能基础」。
+        """
+        q = "".join(ch for ch in (query or "").lower() if ch.isalnum())
+        t = "".join(ch for ch in (text or "").lower() if ch.isalnum())
+        if not q or not t:
+            return 0.0
+        if len(q) == 1:
+            return 1.0 if q in t else 0.0
+        q_grams = {q[i : i + 2] for i in range(len(q) - 1)}
+        t_grams = {t[i : i + 2] for i in range(len(t) - 1)}
+        if not q_grams or not t_grams:
+            return 0.0
+        # 分母固定为查询侧：文本再长也不会把「部分命中」抬成满分
+        return len(q_grams & t_grams) / len(q_grams)
+
     async def keyword_search(
         self, user_id: str, query: str, top_k: int = 5
     ) -> list[dict]:
@@ -102,15 +147,9 @@ class VectorMixin:
             async for record in result:
                 node = dict(record["n"])
                 text = f"{node.get('name', '')} {node.get('summary', '')}"
-                grams = self._char_bigrams(text)
-                if not grams:
+                score = self.keyword_score(query, text)
+                if score <= 0:
                     continue
-                overlap = len(query_grams & grams)
-                if overlap == 0:
-                    continue
-                hits.append({
-                    "node": node,
-                    "score": overlap / min(len(query_grams), len(grams)),
-                })
+                hits.append({"node": node, "score": score})
         hits.sort(key=lambda h: h["score"], reverse=True)
         return hits[:top_k]

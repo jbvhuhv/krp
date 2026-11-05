@@ -113,6 +113,9 @@ class _GraphData:
 class LocalGraphService:
     """与 `GraphService` 接口兼容的只读实现（演示用）。"""
 
+    #: 演示图谱不带向量，检索走关键词（二元组）而非 embedding
+    supports_vector = False
+
     def __init__(self) -> None:
         self._data = _GraphData.instance()
 
@@ -244,16 +247,12 @@ class LocalGraphService:
         q = (query or "").strip()
         if not q:
             return []
-        q_grams = VectorMixin._char_bigrams(q)
         scored: list[tuple[float, dict]] = []
         for node in self._data.visible_nodes(user_id):
             text = f"{node.get('name') or ''}{node.get('summary') or ''}"
-            grams = VectorMixin._char_bigrams(text)
-            if not grams:
-                continue
-            overlap = len(q_grams & grams)
-            if overlap:
-                scored.append((overlap / len(q_grams), dict(node)))
+            score = VectorMixin.keyword_score(q, text)
+            if score > 0:
+                scored.append((score, dict(node)))
         scored.sort(key=lambda item: -item[0])
         return [{**node, "score": round(score, 4)} for score, node in scored[:top_k]]
 

@@ -74,6 +74,17 @@ class SubjectStatsResponse(BaseModel):
     items: list[SubjectStat]
 
 
+class ProfileDimension(BaseModel):
+    name: str
+    value: float
+    tip: str = ""
+
+
+class StudyProfileResponse(BaseModel):
+    total: int = 0
+    dimensions: list[ProfileDimension] = []
+
+
 class BookOut(BaseModel):
     id: str
     name: str

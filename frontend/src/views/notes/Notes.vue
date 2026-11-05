@@ -406,7 +406,7 @@ function renderTrendChart() {
 
 const radarChartRef = ref()
 let radarChart = null
-const radarSubjects = ref([])
+const radarProfile = ref([])
 const radarNoteId = ref('')
 const radarNodes = ref([])
 const radarEmpty = ref(false)
@@ -418,8 +418,6 @@ const radarNoteOptions = computed(() =>
     .filter((n) => (n.nodes_count || 0) > 0)
     .map((n) => ({ id: n.id, title: n.title })),
 )
-
-const NOISE_SUBJECTS = ['未分类', '默认', '其他', '综合']
 
 async function loadRadar() {
   radarLoading.value = true
@@ -435,11 +433,11 @@ async function loadRadar() {
       radarNodes.value = data?.nodes ?? []
       radarEmpty.value = radarNodes.value.length === 0
     } else {
-      const data = await graphApi.getSubjectStats()
-      radarSubjects.value = (data?.items ?? [])
-        .filter((s) => s.subject && !NOISE_SUBJECTS.includes(s.subject))
-        .slice(0, 6)
-      radarEmpty.value = radarSubjects.value.length === 0
+      // 六维学习画像：掌握度/熟练度/巩固度/复习覆盖/知识广度/知识体量，
+      // 全部由图谱真实数据推导（此前是"前 6 个学科"，维度名和含义都不成立）
+      const data = await graphApi.getStudyProfile()
+      radarProfile.value = data?.dimensions ?? []
+      radarEmpty.value = !data?.total || radarProfile.value.length === 0
     }
   } catch {
     radarEmpty.value = true
@@ -493,11 +491,11 @@ function renderRadarChart() {
       (n, i) => `${n.name}：${values[i]}%（${n.subject || '未分类'}）`,
     )
   } else {
-    const subjects = radarSubjects.value
-    names = subjects.map((s) => s.subject)
-    values = subjects.map((s) => Math.round(s.avg_mastery ?? 0))
-    tipRows = subjects.map(
-      (s, i) => `${s.subject}：${values[i]}% 节点 ${s.node_count} 个`,
+    const dims = radarProfile.value
+    names = dims.map((d) => d.name)
+    values = dims.map((d) => Math.round(d.value ?? 0))
+    tipRows = dims.map(
+      (d, i) => `${names[i]}：${d.tip || values[i] + '%'}`,
     )
   }
 
@@ -735,7 +733,7 @@ onBeforeUnmount(() => {
             <div v-else-if="radarInsufficient" class="radar-empty">
               <p>
                 {{
-                  `当前仅识别到 ${radarNoteId ? radarNodes.length + ' 个知识点' : radarSubjects.length + ' 个学科'}，至少 3 个才能生成知识画像`
+                  `当前仅识别到 ${radarNoteId ? radarNodes.length + ' 个知识点' : radarProfile.length + ' 个维度'}，至少 3 个才能生成知识画像`
                 }}
               </p>
               <p class="radar-empty-sub">知识沉淀更丰富后，画像会自动生成</p>

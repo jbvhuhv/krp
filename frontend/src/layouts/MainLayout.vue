@@ -1,9 +1,9 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { useUserStore } from '@/stores/user'
-import { notificationsApi } from '@/api'
+import { authApi, notificationsApi } from '@/api'
 
 import LoginModal from '@/components/LoginModal.vue'
 import PetFloat from '@/components/PetFloat.vue'
@@ -82,6 +82,48 @@ function handleCommand(command) {
     handleLogout()
   } else if (command === 'nickname') {
     openNicknameDialog()
+  } else if (command === 'export') {
+    exportMyData()
+  } else if (command === 'deleteAccount') {
+    confirmDeleteAccount()
+  }
+}
+
+async function exportMyData() {
+  try {
+    const data = await authApi.exportMyData()
+    const blob = new Blob([JSON.stringify(data, null, 2)], {
+      type: 'application/json',
+    })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `krp-my-data-${new Date().toISOString().slice(0, 10)}.json`
+    a.click()
+    URL.revokeObjectURL(url)
+    ElMessage.success('数据导出成功')
+  } catch {
+    ElMessage.error('数据导出失败，请稍后重试')
+  }
+}
+
+async function confirmDeleteAccount() {
+  try {
+    await ElMessageBox.confirm(
+      '注销后将永久删除你的笔记、图谱、宠物、反思记录与社区作品，且无法恢复。确定要注销吗？',
+      '注销账号',
+      { type: 'warning', confirmButtonText: '永久注销', cancelButtonText: '再想想' },
+    )
+  } catch {
+    return
+  }
+  try {
+    await authApi.deleteMe()
+    ElMessage.success('账号已注销，全部个人数据已删除')
+    userStore.logout()
+    router.push('/community')
+  } catch {
+    ElMessage.error('注销失败，请稍后重试')
   }
 }
 
@@ -360,6 +402,14 @@ watch(
                 <el-dropdown-item command="nickname">
                   <el-icon><EditPen /></el-icon>
                   修改昵称
+                </el-dropdown-item>
+                <el-dropdown-item command="export">
+                  <el-icon><Download /></el-icon>
+                  导出我的数据
+                </el-dropdown-item>
+                <el-dropdown-item command="deleteAccount" divided>
+                  <el-icon><Delete /></el-icon>
+                  注销账号
                 </el-dropdown-item>
                 <el-dropdown-item command="logout" divided>
                   <el-icon><SwitchButton /></el-icon>

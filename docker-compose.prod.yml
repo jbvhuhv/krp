@@ -8,7 +8,9 @@
 #   3) 首次启动会自动灌入演示数据（可 DEMO_BOOTSTRAP=false 关闭）
 #
 # 与 docker-compose.yml 的区别：那份是「本地开发基础设施」（Postgres+Redis+Neo4j），
-# 这份是「单机生产部署」（本应用容器 + Neo4j，关系库用 SQLite，无需 Postgres/Redis）。
+# 这份是「单机生产部署」（本应用容器 + Neo4j + Redis，关系库用 SQLite）。
+# 为什么要带 Redis：短信验证码、登录失败计数、接口限流都存在 Redis 里；
+# 没有 Redis 时 /auth/send-code 只能直接 503，非演示账号无法登录。
 
 services:
   app:
@@ -27,6 +29,8 @@ services:
     restart: unless-stopped
     depends_on:
       neo4j:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     env_file:
       - .env.production
@@ -52,6 +56,8 @@ services:
       # 配合下方 Nginx/Caddy 终止 TLS，避免 token 明文过网。
       ACCESS_TOKEN_EXPIRE_MINUTES: "1440"
       NEO4J_URI: "bolt://neo4j:7687"
+      REDIS_HOST: "redis"
+      REDIS_PORT: "6379"
       SCHEDULER_ENABLED: "true"
     # 最小权限：以镜像内的非 root 用户运行，丢弃全部 Linux capabilities，
     # 并禁止 setuid 提权。首次切换需要先把 /data 卷的所有者改为该 UID（见 README 预检命令）。
@@ -99,7 +105,22 @@ services:
       retries: 10
       start_period: 60s
 
+  redis:
+    image: redis:7-alpine
+    container_name: krp-redis
+    restart: unless-stopped
+    # 只在内网供 app 使用，不映射端口；appendonly 保证重启后验证码/计数不丢太多
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - krp-redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
 volumes:
   krp-data:
   krp-neo4j:
   krp-neo4j-logs:
+  krp-redis:

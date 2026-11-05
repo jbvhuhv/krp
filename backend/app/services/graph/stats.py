@@ -84,3 +84,67 @@ class StatsMixin:
                     }
                 )
             return stats
+
+    async def get_study_profile(self, user_id: str) -> dict:
+        """学习画像六维：由图谱真实数据推导，而不是"前 6 个学科"。
+
+        - 掌握度：知识点平均掌握度
+        - 熟练度：掌握度 ≥80 的节点占比（已吃透）
+        - 巩固度：掌握度 ≥60 的节点占比（基本掌握）
+        - 复习覆盖：被复习过（mastery > 0 或 last_reviewed 非空）的节点占比
+        - 知识广度：覆盖的学科数（对数归一到 0-100）
+        - 知识体量：知识点数量（对数归一到 0-100）
+        """
+        import math
+
+        async with self.driver.session() as session:
+            result = await session.run(
+                f"""
+                MATCH (n:{NODE_LABEL} {{user_id: $user_id, node_type: $node_type}})
+                WITH coalesce(n.subject, $unclassified) AS subject,
+                     coalesce(n.mastery, 0.0) AS mastery,
+                     coalesce(n.last_reviewed, n.lastReviewed) AS last_reviewed
+                RETURN count(*) AS total,
+                       avg(mastery) AS avg_mastery,
+                       sum(CASE WHEN mastery >= 80 THEN 1 ELSE 0 END) AS proficient,
+                       sum(CASE WHEN mastery >= 60 THEN 1 ELSE 0 END) AS solid,
+                       sum(CASE WHEN mastery > 0 OR last_reviewed IS NOT NULL
+                                THEN 1 ELSE 0 END) AS reviewed,
+                       count(DISTINCT CASE WHEN NOT subject IN $noise_subjects
+                                THEN subject END) AS subject_count
+                """,
+                user_id=user_id,
+                node_type=NODE_TYPE_KNOWLEDGE,
+                unclassified=UNCLASSIFIED_SUBJECT,
+                noise_subjects=list(NOISE_SUBJECTS),
+            )
+            record = await result.single()
+        total = int(record["total"]) if record and record["total"] else 0
+        if total == 0:
+            return {
+                "total": 0,
+                "dimensions": [],
+            }
+        subject_count = int(record["subject_count"] or 0)
+        avg_mastery = float(record["avg_mastery"] or 0.0)
+        solid_ratio = (int(record["solid"] or 0) / total) * 100
+        reviewed_ratio = (int(record["reviewed"] or 0) / total) * 100
+        # 对数刻度：1 本书 ≈ 25 分，10 本 ≈ 75 分，量级感知比线性更贴近直觉
+        volume = min(100.0, math.log1p(total) / math.log1p(300) * 100)
+        breadth = min(100.0, math.log1p(subject_count) / math.log1p(12) * 100)
+        proficient = (int(record["proficient"] or 0) / total) * 100
+        dimensions = [
+            {"name": "掌握度", "value": round(avg_mastery, 1),
+             "tip": f"平均掌握度 {avg_mastery:.0f}%"},
+            {"name": "熟练度", "value": round(proficient, 1),
+             "tip": f"≥80% 的知识点占 {proficient:.0f}%"},
+            {"name": "巩固度", "value": round(solid_ratio, 1),
+             "tip": f"≥60% 的知识点占 {solid_ratio:.0f}%"},
+            {"name": "复习覆盖", "value": round(reviewed_ratio, 1),
+             "tip": f"已复习的知识点占 {reviewed_ratio:.0f}%"},
+            {"name": "知识广度", "value": round(breadth, 1),
+             "tip": f"覆盖 {subject_count} 个学科"},
+            {"name": "知识体量", "value": round(volume, 1),
+             "tip": f"共 {total} 个知识点"},
+        ]
+        return {"total": total, "dimensions": dimensions}

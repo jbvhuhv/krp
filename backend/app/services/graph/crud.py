@@ -349,6 +349,20 @@ class CrudMixin:
             record = await result.single()
             return record["deleted"] if record else 0
 
+    async def delete_all_nodes(self, user_id: str) -> int:
+        """删除该用户的全部图谱节点（注销账号时调用，满足个保法的删除权）。"""
+        async with self.driver.session() as session:
+            result = await session.run(
+                f"""
+                MATCH (n:{NODE_LABEL} {{user_id: $user_id}})
+                DETACH DELETE n
+                RETURN count(n) AS deleted
+                """,
+                user_id=user_id,
+            )
+            record = await result.single()
+            return record["deleted"] if record else 0
+
     async def update_mastery(
         self, user_id: str, node_id: str, mastery: float
     ) -> dict | None:

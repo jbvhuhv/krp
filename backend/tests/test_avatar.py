@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -7,7 +8,17 @@ import pytest
 from app.models.avatar import ChatMessage
 from app.models.note import Note
 from app.models.reflection import ReflectionRecord
-from app.services.avatar_service import BLOCK_MESSAGE, AvatarService
+from app.services.avatar_service import (
+    _BACKGROUND_TASKS,
+    BLOCK_MESSAGE,
+    AvatarService,
+)
+
+
+async def _drain_backfill():
+    """publish 把向量回填丢到后台任务，测试里要等它跑完再断言。"""
+    if _BACKGROUND_TASKS:
+        await asyncio.gather(*list(_BACKGROUND_TASKS), return_exceptions=True)
 
 
 async def _aiter(items):
@@ -31,6 +42,8 @@ def mock_ai_service():
 @pytest.fixture
 def mock_graph_service():
     service = AsyncMock()
+    service.supports_vector = True
+    service.keyword_search = AsyncMock(return_value=[])
     service.get_subject_distribution = AsyncMock(return_value={"物理": 3, "数学": 2})
     service.get_mastery_overview = AsyncMock(return_value={
         "total": 5, "avg_mastery": 72.5, "weak": 1, "basic": 2, "proficient": 2,
@@ -98,6 +111,7 @@ class TestPublishUnpublish:
         # 分享链接应指向访客可用的聊天页，而不是会重定向的 avatar 页
         assert avatar_service.build_share_url(avatar).endswith(f"/chat/{avatar.id}")
         mock_graph_service.ensure_vector_index.assert_not_called()
+        await _drain_backfill()
         mock_graph_service.get_nodes_without_embedding.assert_called_once()
 
     async def test_publish_with_config(self, avatar_service):
@@ -127,6 +141,7 @@ class TestPublishUnpublish:
         ])
 
         await avatar_service.publish("user-1")
+        await _drain_backfill()
 
         assert mock_graph_service.set_node_embedding.call_count == 2
         assert mock_ai_service.embed.call_count == 2
@@ -145,14 +160,20 @@ class TestRAGSearch:
         assert len(hits) == 1
         assert hits[0]["score"] == 0.9
 
-    async def test_rag_search_without_embedding_client(
-        self, avatar_service, mock_ai_service
+    async def test_rag_search_without_embedding_falls_back_to_keyword(
+        self, avatar_service, mock_ai_service, mock_graph_service
     ):
+        """没有 embedding provider 时不能直接返回空——演示环境就靠关键词兜底。"""
         mock_ai_service.embedding = None
+        mock_graph_service.keyword_search = AsyncMock(return_value=[
+            {"node": {"id": "n1", "name": "牛顿第二定律"}, "score": 0.5},
+        ])
 
-        hits = await avatar_service.rag_search("user-1", "问题")
+        hits = await avatar_service.rag_search("user-1", "牛顿第二定律")
 
-        assert hits == []
+        assert len(hits) == 1
+        assert hits[0]["score"] == 0.5
+        mock_graph_service.vector_search.assert_not_called()
 
     async def test_rag_search_embedding_failure_returns_empty(
         self, avatar_service, mock_ai_service

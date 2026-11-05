@@ -1,3 +1,4 @@
+import asyncio
 import secrets
 from datetime import datetime, timezone
 
@@ -18,6 +19,9 @@ logger = get_logger(__name__)
 
 BLOCK_MESSAGE = "抱歉，该问题超出我的知识范围"
 ANONYMOUS_VISITOR = "anonymous"
+
+# 后台回填任务的强引用集合，防止任务被垃圾回收中途取消
+_BACKGROUND_TASKS: set[asyncio.Task] = set()
 
 
 def _visitor_display_name(visitor_key: str) -> str:
@@ -144,7 +148,10 @@ class AvatarService:
         avatar.status = "online"
         await self.db.commit()
         await self.db.refresh(avatar)
-        await self._backfill_embeddings(user_id)
+        # 回填改为后台任务：串行 200 次 embed 在请求内同步执行会拖死发布接口
+        #（大书约 40 秒，大概率被反代超时掐断）。抽取链路已覆盖大部分节点，
+        # 这里只是异步补缺口，失败有日志可查。
+        self._spawn_backfill(user_id)
         return avatar
 
     async def unpublish(self, user_id: str) -> Avatar:
@@ -169,7 +176,23 @@ class AvatarService:
         id_to_name = {b.get("id"): b.get("name") for b in books}
         return [id_to_name.get(item, item) for item in scope]
 
+    def _spawn_backfill(self, user_id: str) -> None:
+        """fire-and-forget 的向量回填；引用 task 防止被 GC，异常兜底记日志。"""
+
+        async def _run() -> None:
+            try:
+                await self._backfill_embeddings(user_id)
+            except Exception:  # noqa: BLE001
+                logger.exception("向量回填任务异常 user_id=%s", user_id)
+
+        task = asyncio.create_task(_run())
+        _BACKGROUND_TASKS.add(task)
+        task.add_done_callback(_BACKGROUND_TASKS.discard)
+
     async def _backfill_embeddings(self, user_id: str) -> None:
+        # 演示图谱是只读且不带向量的，回填只会抛「不支持写操作」，直接跳过
+        if not getattr(self.graph_service, "supports_vector", True):
+            return
         try:
 
             nodes = await self.graph_service.get_nodes_without_embedding(
@@ -178,26 +201,30 @@ class AvatarService:
         except Exception:
             logger.exception("查询待向量化节点失败")
             return
-        for node in nodes:
+        # 小并发代替串行：200 个节点从 ~40s 压到 ~10s，且不易触发上游限流
+        semaphore = asyncio.Semaphore(4)
+
+        async def _one(node: dict) -> None:
             text = f"{node.get('name', '')} {node.get('summary', '')}".strip()
             if not text:
-                continue
+                return
             try:
-                embedding = await self.ai_service.embed(text)
-            except Exception:
-                logger.exception("节点向量化失败 node_id=%s", node.get("id"))
-                break
-            try:
+                async with semaphore:
+                    embedding = await self.ai_service.embed(text)
                 await self.graph_service.set_node_embedding(
                     user_id, node["id"], embedding
                 )
             except Exception:
-                logger.exception("写入节点向量失败 node_id=%s", node.get("id"))
+                logger.exception("节点向量化失败 node_id=%s", node.get("id"))
 
-    async def rag_search(
-        self, user_id: str, query: str, top_k: int | None = None
+        await asyncio.gather(*(_one(n) for n in nodes))
+
+    async def _vector_search(
+        self, user_id: str, query: str, top_k: int
     ) -> list[dict]:
-        top_k = top_k or settings.AVATAR_TOP_K
+        """纯向量检索；图谱/模型不支持时返回空，由调用方决定是否降级。"""
+        if not getattr(self.graph_service, "supports_vector", True):
+            return []
         if getattr(self.ai_service, "embedding", None) is None:
             return []
         try:
@@ -206,7 +233,7 @@ class AvatarService:
             logger.exception("查询 Embedding 失败")
             return []
         try:
-            hits = await self.graph_service.vector_search(
+            return await self.graph_service.vector_search(
                 user_id,
                 query_embedding,
                 top_k=top_k,
@@ -215,7 +242,30 @@ class AvatarService:
         except Exception:
             logger.exception("Neo4j 向量检索失败")
             return []
-        return hits
+
+    async def _keyword_search(
+        self, user_id: str, query: str, top_k: int
+    ) -> list[dict]:
+        keyword_search = getattr(self.graph_service, "keyword_search", None)
+        if keyword_search is None:
+            return []
+        try:
+            return await keyword_search(user_id, query, top_k=top_k)
+        except Exception:
+            logger.exception("关键词检索失败")
+            return []
+
+    async def rag_search(
+        self, user_id: str, query: str, top_k: int | None = None
+    ) -> list[dict]:
+        top_k = top_k or settings.AVATAR_TOP_K
+        hits = await self._vector_search(user_id, query, top_k)
+        if hits:
+            return hits
+        # 降级：演示图谱没有向量、或未配置 embedding 时，用关键词检索。
+        # 没有这层降级，评委在演示环境问分身只会得到「没找到相关知识」——
+        # 几百个知识点明明就在那里，却因为缺少 embedding provider 而检索不到。
+        return await self._keyword_search(user_id, query, top_k)
 
     async def _build_sources_and_context(
         self, hits: list[dict]
@@ -332,9 +382,11 @@ class AvatarService:
 
         # 同时尝试向量语义检索与关键词检索：任一来源达标即可作答，取分高者。
         # 避免"向量低分命中却堵死关键词兜底"导致的错误拒答。
-        vector_hits = await self.rag_search(avatar.user_id, query)
-        keyword_hits = await self.graph_service.keyword_search(
-            avatar.user_id, query, top_k=settings.AVATAR_TOP_K
+        vector_hits = await self._vector_search(
+            avatar.user_id, query, settings.AVATAR_TOP_K
+        )
+        keyword_hits = await self._keyword_search(
+            avatar.user_id, query, settings.AVATAR_TOP_K
         )
 
         vector_score = vector_hits[0]["score"] if vector_hits else 0.0

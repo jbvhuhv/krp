@@ -20,6 +20,23 @@ router = APIRouter()
 
 logger = get_logger(__name__)
 
+# brainstorm 两个入口都是即时 LLM 调用，此前完全无限流——脚本一秒能烧几十次调用。
+# 复用统一计数器（Redis 优先、进程内兜底），每用户每分钟 10 次。
+BRAINSTORM_RPM = 10
+
+
+async def _check_brainstorm_quota(user_id: str) -> None:
+    from fastapi import HTTPException as _HTTPException
+
+    from app.core import rate_limit
+
+    used = await rate_limit.incr(f"brainstorm:{user_id}", 60)
+    if used > BRAINSTORM_RPM:
+        raise _HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="头脑风暴调用过于频繁，请稍后再试",
+        )
+
 MAX_OUTLINE_LINES = 120
 MAX_OUTLINE_DEPTH = 6
 
@@ -128,6 +145,7 @@ async def verify_structure(
     graph_service: GraphService = Depends(get_graph_service),
     ai_service: AIService = Depends(get_ai_service),
 ):
+    await _check_brainstorm_quota(user_id)
     data = await graph_service.get_tree(user_id, payload.book_id)
     if data is None:
         raise HTTPException(
@@ -199,6 +217,7 @@ async def suggest(
     graph_service: GraphService = Depends(get_graph_service),
     ai_service: AIService = Depends(get_ai_service),
 ):
+    await _check_brainstorm_quota(user_id)
     node = await graph_service.get_node_detail(user_id, payload.node_id)
     if node is None:
         raise HTTPException(
@@ -283,6 +302,7 @@ async def suggest_stream(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="流式构思不支持 mode=generate，请改用 /brainstorm/suggest",
         )
+    await _check_brainstorm_quota(user_id)
 
     node = await graph_service.get_node_detail(user_id, payload.node_id)
     if node is None:
