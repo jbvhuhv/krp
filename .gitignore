@@ -68,3 +68,5 @@ skills-lock.json
 
 # pytest 本地临时目录
 .pytest_tmp*
+
+.git-commit-msg.txt
