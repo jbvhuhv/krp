@@ -616,6 +616,7 @@ class TestAvatarAPI:
         assert response.status_code == 200
         profile = response.json()["profile"]
         assert profile["domain_distribution"] == {"物理": 3}
-        assert profile["summary"] == "共 5 个知识点"
+        # 公开摘要脱敏：不得回传原文（含掌握度/反思统计），只保留规模描述
+        assert profile["summary"] == "覆盖 1 个学科方向，共 3 个知识点，欢迎围绕这些方向提问"
         assert profile["mastery_overview"] == {}
         assert profile["reflection_style"] == {}

@@ -174,6 +174,11 @@ async function handleMoreQuestion(question) {
     const newQuestion = await reflectionApi.generateMore(nodeId)
     questions.value = [...questions.value, newQuestion]
     ElMessage.success(`已生成「${newQuestion.node_name || question.node_name}」的加练题`)
+    // 新题追加在列表底部，滚动定位过去，避免用户以为没反应
+    await nextTick()
+    document
+      .getElementById(`question-card-${newQuestion.id}`)
+      ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
   } catch {
     // 404（加练额度用完 / 节点不存在）由拦截器统一提示，这里不再叠加报错
   } finally {
@@ -429,6 +434,7 @@ onBeforeUnmount(() => {
         <template v-if="questions.length">
           <div
             v-for="(q, idx) in questions"
+            :id="`question-card-${q.id}`"
             :key="q.id"
             class="question-item"
             :class="{ 'is-answered': q.answered }"

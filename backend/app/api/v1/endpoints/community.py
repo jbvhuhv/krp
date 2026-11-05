@@ -36,6 +36,7 @@ from app.schemas.community import (
     PostList,
     PostOut,
     PostVisibilityUpdate,
+    SubjectCount,
 )
 from app.services.graph.constants import NODE_TYPE_BOOK
 from app.services.graph_service import GraphService
@@ -342,7 +343,24 @@ async def list_posts(
             ).scalars().all()
 
     items = await _build_briefs(db, paged_posts, current_user_id)
-    return PostList(items=items, total=total)
+    subjects = await _collect_subject_counts(db)
+    return PostList(items=items, total=total, subjects=subjects)
+
+
+async def _collect_subject_counts(db: AsyncSession) -> list[SubjectCount]:
+    """全站公开帖子的学科分布（数量降序）。
+    subject 派生自 JSON 快照（SQLite 下中文转义，SQL 聚合不可靠），
+    演示规模下全量扫描成本可忽略；规模上来后快照应落独立列再聚合。"""
+    result = await db.execute(
+        select(CommunityPost).where(CommunityPost.is_public.is_(True))
+    )
+    counts: dict[str, int] = {}
+    for post in result.scalars().all():
+        subject = _derive_snapshot_meta(post)[0]
+        if subject:
+            counts[subject] = counts.get(subject, 0) + 1
+    ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    return [SubjectCount(name=name, count=count) for name, count in ranked]
 
 
 @router.get("/my-posts", response_model=PostList)

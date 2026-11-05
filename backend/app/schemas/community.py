@@ -72,9 +72,16 @@ class PostOut(PostBrief):
     graph_snapshot: GraphSnapshot
 
 
+class SubjectCount(BaseModel):
+    name: str
+    count: int
+
+
 class PostList(BaseModel):
     items: list[PostBrief]
     total: int
+    # 全站公开帖子的学科分布（按数量降序），供前端动态渲染学科 Tab
+    subjects: list[SubjectCount] = []
 
 
 class LikeResponse(BaseModel):

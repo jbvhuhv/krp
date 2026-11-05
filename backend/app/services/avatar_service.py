@@ -154,6 +154,10 @@ class AvatarService:
         if config:
             self._apply_config(avatar, config)
         avatar.profile = await self.generate_profile(user_id)
+        # 未配置知识范围时按知识书自动填充：访客页的推荐问题按 scope 派生，
+        # 留空会导致推荐区只剩「讲讲某学科的核心知识」一条（学科画像粒度太粗）
+        if not avatar.knowledge_scope:
+            avatar.knowledge_scope = await self._derive_default_scope(user_id)
         if not avatar.share_token:
             avatar.share_token = secrets.token_urlsafe(16)
         avatar.status = "online"
@@ -164,6 +168,18 @@ class AvatarService:
         # 这里只是异步补缺口，失败有日志可查。
         self._spawn_backfill(user_id)
         return avatar
+
+    async def _derive_default_scope(self, user_id: str) -> list[str]:
+        """以知识书 id 为粒度的默认知识范围（有内容的书，最多 12 本）。"""
+        try:
+            books = await self.graph_service.get_books(user_id)
+        except Exception:  # noqa: BLE001  图谱不可用时发布不应被卡死
+            return []
+        return [
+            b["id"]
+            for b in books
+            if b.get("id") and (b.get("node_count") or 0) > 0
+        ][:12]
 
     async def unpublish(self, user_id: str) -> Avatar:
         avatar = await self.get_or_create_avatar(user_id)

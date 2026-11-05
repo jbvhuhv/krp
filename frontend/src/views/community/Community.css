@@ -824,3 +824,14 @@
   color: #67e8f9;
   font-weight: 600;
 }
+
+.subject-tab .tab-count {
+  margin-left: 5px;
+  font-style: normal;
+  font-size: 11px;
+  opacity: 0.65;
+}
+
+.subject-tab.active .tab-count {
+  opacity: 0.9;
+}

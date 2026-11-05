@@ -75,12 +75,27 @@ def _to_public_avatar_out(
     avatar, scope: list[str] | None = None, owner_name: str | None = None
 ) -> AvatarOut:
     """公开访问（访客视角）时仅回吐可展示的知识画像字段，
-    不下发 mastery_overview / reflection_style 等主人学习状态细节。"""
+    不下发 mastery_overview / reflection_style 等主人学习状态细节。
+    summary 同样脱敏：完整摘要含掌握度与反思统计，属于主人学习状态。"""
     profile = None
     if avatar.profile:
+        dist = avatar.profile.get("domain_distribution", {}) or {}
+        total_nodes = 0
+        for count in dist.values():
+            try:
+                total_nodes += int(count)
+            except (TypeError, ValueError):
+                continue
+        if dist and total_nodes > 0:
+            public_summary = (
+                f"覆盖 {len(dist)} 个学科方向，共 {total_nodes} 个知识点，"
+                "欢迎围绕这些方向提问"
+            )
+        else:
+            public_summary = "这个分身刚发布，还没有积累出画像"
         profile = KnowledgeProfile(
-            domain_distribution=avatar.profile.get("domain_distribution", {}),
-            summary=avatar.profile.get("summary", ""),
+            domain_distribution=dist,
+            summary=public_summary,
         )
     knowledge_scope = scope if scope is not None else (avatar.knowledge_scope or [])
     return AvatarOut(

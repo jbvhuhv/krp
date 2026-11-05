@@ -21,18 +21,9 @@ const searchQuery = ref('')
 
 const sortBy = ref('newest')
 
-// 学科筛选：选项与卡片主题规则对齐；后端按快照 subject 众数过滤
-const SUBJECT_OPTIONS = [
-  '人工智能',
-  '计算机科学',
-  '计算机网络',
-  '数据结构与算法',
-  '数学',
-  '物理',
-  '化学',
-  '英语',
-  '经济管理',
-]
+// 学科 Tab 选项来自后端返回的实际学科分布（PostList.subjects），
+// 不再写死：帖子学科由快照众数派生，写死的清单必然与数据错位
+const subjectOptions = ref([])
 const subjectFilter = ref('')
 
 
@@ -102,6 +93,8 @@ async function loadPosts() {
     if (seq !== loadSeq) return
     posts.value = data?.items ?? []
     total.value = data?.total ?? 0
+    // 学科分布始终来自全站数据（与当前筛选无关），Tab 才能完整可达
+    subjectOptions.value = data?.subjects ?? []
   } catch {
     if (seq !== loadSeq) return
     loadError.value = true
@@ -248,15 +241,15 @@ watch(
         全部
       </button>
       <button
-        v-for="subject in SUBJECT_OPTIONS"
-        :key="subject"
+        v-for="subject in subjectOptions"
+        :key="subject.name"
         class="subject-tab"
-        :class="{ active: subjectFilter === subject }"
+        :class="{ active: subjectFilter === subject.name }"
         role="tab"
-        :aria-selected="subjectFilter === subject"
-        @click="handleSubjectChange(subject)"
+        :aria-selected="subjectFilter === subject.name"
+        @click="handleSubjectChange(subject.name)"
       >
-        {{ subject }}
+        {{ subject.name }}<em class="tab-count">{{ subject.count }}</em>
       </button>
     </div>
 
@@ -472,7 +465,11 @@ watch(
 
       <el-empty
         v-if="!loading && !loadError && posts.length === 0"
-        description="暂无图谱，快来发布第一个吧"
+        :description="
+          subjectFilter
+            ? `「${subjectFilter}」学科下暂无内容，看看其他学科吧`
+            : '暂无图谱，快来发布第一个吧'
+        "
         class="empty-state"
       >
         <template #image>
@@ -545,9 +542,17 @@ watch(
           </svg>
         </template>
 
-        <el-button class="empty-cta" type="primary" @click="router.push('/graph')">
+        <el-button
+          v-if="!subjectFilter"
+          class="empty-cta"
+          type="primary"
+          @click="router.push('/graph')"
+        >
           <el-icon><Share /></el-icon>
           去发布第一个图谱
+        </el-button>
+        <el-button v-else class="empty-cta" @click="handleSubjectChange('')">
+          查看全部学科
         </el-button>
       </el-empty>
     </div>
