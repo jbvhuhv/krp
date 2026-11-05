@@ -426,12 +426,6 @@ onMounted(async () => {
             <el-option label="按学科归类" value="subject" />
             <el-option label="按知识点数量" value="nodes" />
           </el-select>
-          <button class="shelf-del-btn" @click="goToNotes">
-            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-              <path d="M12 16V4m0 0L7 9m5-5l5 5M9 20h10a1 1 0 0 0 1-1v-5M5 17a4 4 0 0 0 4 4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
-            <span>上传笔记</span>
-          </button>
           <button
             v-if="displayBooks.length"
             class="shelf-del-btn"
