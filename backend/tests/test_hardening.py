@@ -214,6 +214,7 @@ async def test_delete_me_removes_all_user_data(client, test_db):
     from app.main import app
     from app.models.avatar import Avatar, ChatMessage
     from app.models.note import Note
+    from app.models.reflection import NodeMasteryOverride, NodeView
     from app.models.user import User
 
     user = User(id="del-user-1", phone="13900001111")
@@ -224,6 +225,13 @@ async def test_delete_me_removes_all_user_data(client, test_db):
     )
     test_db.add(
         ChatMessage(id="del-msg-1", avatar_id="del-avatar-1", role="user", content="hi")
+    )
+    # 行为数据也是个人信息：看过哪些知识点、掌握度改到多少，都要随注销清掉
+    test_db.add(NodeView(id="del-view-1", user_id="del-user-1", node_id="node-1"))
+    test_db.add(
+        NodeMasteryOverride(
+            id="del-ovr-1", user_id="del-user-1", node_id="node-1", mastery=66.0
+        )
     )
     await test_db.commit()
 
@@ -244,6 +252,18 @@ async def test_delete_me_removes_all_user_data(client, test_db):
             )
         ).scalars().all()
         assert msgs == []
+        views = (
+            await test_db.execute(select(NodeView).where(NodeView.user_id == "del-user-1"))
+        ).scalars().all()
+        assert views == []
+        overrides = (
+            await test_db.execute(
+                select(NodeMasteryOverride).where(
+                    NodeMasteryOverride.user_id == "del-user-1"
+                )
+            )
+        ).scalars().all()
+        assert overrides == []
         gone = (
             await test_db.execute(select(User).where(User.id == "del-user-1"))
         ).scalar_one_or_none()

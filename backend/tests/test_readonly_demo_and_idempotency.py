@@ -78,7 +78,9 @@ async def test_ensure_today_questions_is_idempotent(test_db, mock_graph_service)
     first = await service.ensure_today_questions("ensure-user")
     second = await service.ensure_today_questions("ensure-user")
 
-    assert [r.id for r in first] == [r.id for r in second]
+    # 同一秒生成的多条记录 created_at 相同，查询按 id DESC 兜底排序，
+    # 与插入顺序不一定一致——比顺序会随机失败，这里只比「同一批题」。
+    assert {r.id for r in first} == {r.id for r in second}
     rows = (
         await test_db.execute(
             select(ReflectionRecord).where(ReflectionRecord.user_id == "ensure-user")

@@ -1,7 +1,16 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, String, Text, func
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.user import Base
@@ -57,6 +66,29 @@ class NodeView(Base):
     node_id: Mapped[str] = mapped_column(String(36), index=True, nullable=False)
     viewed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
+    )
+
+
+class NodeMasteryOverride(Base):
+    """演示模式下的掌握度覆盖层。
+
+    内置只读图谱（无 Neo4j 部署）不能写回 jsonl，但「答题 → 掌握度上升 →
+    第二天换一批题」是反思闭环的核心。把答题结果落到这张表里，读图谱时合并，
+    既能保持演示图谱本身只读，又不会让用户答完题后一切照旧。
+    """
+
+    __tablename__ = "node_mastery_overrides"
+    __table_args__ = (
+        UniqueConstraint("user_id", "node_id", name="uq_node_mastery_override"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), index=True, nullable=False)
+    node_id: Mapped[str] = mapped_column(String(36), index=True, nullable=False)
+    mastery: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    last_reviewed: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
 

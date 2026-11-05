@@ -12,7 +12,9 @@ def get_graph_service():
 
     mode = (settings.GRAPH_BACKEND or "auto").strip().lower()
     if mode == "sqlite" or (mode == "auto" and neo4j_available() is False):
+        from app.core.database import AsyncSessionLocal
         from app.services.graph.local_service import LocalGraphService
 
-        return LocalGraphService()
+        # 传会话工厂：演示图谱只读，但答题产生的掌握度要能落库（覆盖层）
+        return LocalGraphService(session_factory=AsyncSessionLocal)
     return GraphService(driver=neo4j_driver)

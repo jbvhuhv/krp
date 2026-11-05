@@ -233,7 +233,12 @@ async def export_my_data(
     from app.models.note import Note
     from app.models.notification import Notification
     from app.models.pet import Pet, PetMessage
-    from app.models.reflection import ReflectionRecord, ReflectionSchedule
+    from app.models.reflection import (
+        NodeMasteryOverride,
+        NodeView,
+        ReflectionRecord,
+        ReflectionSchedule,
+    )
 
     uid = current_user.id
 
@@ -277,6 +282,9 @@ async def export_my_data(
         "notes": await _all(Note),
         "reflection_records": await _all(ReflectionRecord),
         "reflection_schedules": await _all(ReflectionSchedule),
+        # 行为埋点与演示模式下的掌握度覆盖层也属于本人数据，导出要带上
+        "node_views": await _all(NodeView),
+        "node_mastery_overrides": await _all(NodeMasteryOverride),
         "pets": pet,
         "pet_messages": await _all(PetMessage),
         "avatars": await _all(Avatar),
@@ -311,7 +319,12 @@ async def delete_me(
     from app.models.note import Note
     from app.models.notification import Notification
     from app.models.pet import Pet, PetMessage
-    from app.models.reflection import ReflectionRecord, ReflectionSchedule
+    from app.models.reflection import (
+        NodeMasteryOverride,
+        NodeView,
+        ReflectionRecord,
+        ReflectionSchedule,
+    )
 
     uid = current_user.id
 
@@ -345,12 +358,16 @@ async def delete_me(
         await db.execute(sa_delete(ChatMessage).where(ChatMessage.avatar_id.in_(avatar_ids)))
 
     # 4) 其余业务数据
+    # NodeView / NodeMasteryOverride 是"看过哪些知识点、掌握度因何变化"的行为数据，
+    # 同样属于个人信息，注销时必须一并删除，否则「已注销」仍能还原学习轨迹。
     for model in (
         Avatar,
         PetMessage,
         Pet,
         ReflectionRecord,
         ReflectionSchedule,
+        NodeView,
+        NodeMasteryOverride,
         Notification,
         Note,
     ):

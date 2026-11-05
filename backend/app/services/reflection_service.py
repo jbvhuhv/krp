@@ -140,11 +140,17 @@ MASTERY_MAX_NEW_WEIGHT = 0.85
 
 
 def _days_since(last_reviewed) -> float | None:
-    """把图谱节点上的 last_reviewed 时间转换为距今的天数；缺失或非法时返回 None。"""
+    """把图谱节点上的 last_reviewed 时间转换为距今的天数；缺失或非法时返回 None。
+
+    演示图谱（只读 JSONL）里的时间是 ISO 字符串，Neo4j 里是 DateTime，
+    两种都要认——否则演示环境的「越久没复习权重越大」永远不生效。
+    """
     if last_reviewed is None:
         return None
     try:
-        if hasattr(last_reviewed, "to_native"):
+        if isinstance(last_reviewed, str):
+            last_reviewed = datetime.fromisoformat(last_reviewed.replace("Z", "+00:00"))
+        elif hasattr(last_reviewed, "to_native"):
             last_reviewed = last_reviewed.to_native()
         if last_reviewed.tzinfo is None:
             last_reviewed = last_reviewed.replace(tzinfo=timezone.utc)
@@ -175,20 +181,51 @@ def template_question(node_name: str, node_summary: str = "") -> str:
 
 
 def build_question_reason(node: dict, signals: dict | None) -> str:
-    """把「为什么今天问这道题」讲清楚：先讲硬原因（掌握度/久未复习），再补行为信号。"""
+    """把「为什么今天问这道题」讲清楚：先讲硬原因（久未复习/掌握度），再补行为信号。"""
     mastery = _to_score(node.get("mastery"), 0.0)
     parts: list[str] = []
-    if mastery < MASTERY_THRESHOLD:
-        parts.append(f"掌握度 {mastery:.0f} 分，低于 {MASTERY_THRESHOLD:.0f}")
-    elif node.get("last_reviewed") is None:
+    last_reviewed = node.get("last_reviewed")
+    days = _days_since(last_reviewed)
+
+    if last_reviewed is None:
+        # 0 分的新知识点说「掌握度 0 分」等于什么都没说，讲「还没复习过」才有信息量
         parts.append("还没有复习记录")
+    elif mastery < MASTERY_THRESHOLD:
+        parts.append(f"掌握度 {mastery:.0f} 分，低于 {MASTERY_THRESHOLD:.0f}")
+    elif days is None:
+        parts.append("超过 7 天没有复习")
     else:
-        days = _days_since(node.get("last_reviewed"))
-        parts.append("超过 7 天没有复习" if days is None else f"距上次复习 {days:.0f} 天")
+        parts.append(f"距上次复习 {days:.0f} 天")
 
     if signals:
         parts.extend(signals.get("reasons") or [])
     return "；".join(parts)
+
+
+def diversify_by_subject(
+    nodes: list[dict], limit: int, per_subject: int = 2
+) -> list[dict]:
+    """同一天的题尽量分散到不同学科。
+
+    队列按「久未复习」排序时，同一次导入的一章知识点往往挤在一起：
+    5 道题全来自材料力学，反思就变成了背同一页书。这里限制单学科最多 2 道，
+    不够再按原顺序补齐，保证「有 5 道题」优先于「绝对分散」。
+    """
+    picked: list[dict] = []
+    overflow: list[dict] = []
+    used: dict[str, int] = {}
+    for node in nodes:
+        if len(picked) >= limit:
+            break
+        subject = str(node.get("subject") or "")
+        if used.get(subject, 0) >= per_subject:
+            overflow.append(node)
+            continue
+        used[subject] = used.get(subject, 0) + 1
+        picked.append(node)
+    if len(picked) < limit:
+        picked.extend(overflow[: limit - len(picked)])
+    return picked
 
 
 def compute_mastery_weights(
@@ -264,7 +301,7 @@ class ReflectionService:
                 _to_score(n.get("mastery"), 0.0),
             )
         )
-        nodes = nodes[:max_questions]
+        nodes = diversify_by_subject(nodes, max_questions)
 
         records = []
         for node in nodes:
