@@ -4,15 +4,15 @@ mock_graph_service 是 AsyncMock：get_books 默认返回 Mock 值，
 demo 端点用它判断「书架是否已有数据」，用例里显式覆写。
 """
 
-from app.api.deps import get_graph_service
 
 
 class TestDemoBootstrap:
     async def test_bootstrap_creates_sample_book_and_note(
         self, client, mock_graph_service, test_db
     ):
-        from app.models.note import Note
         from sqlalchemy import select
+
+        from app.models.note import Note
 
         async def empty_books(user_id):
             return []  # 空书架 → 允许引导

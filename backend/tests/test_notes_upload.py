@@ -227,14 +227,6 @@ async def test_upload_blank_text_is_rejected_before_extraction(client):
     assert "提取到文字" in resp.json()["detail"]
 
 
-async def test_upload_blank_text_is_rejected_before_extraction(client):
-    """扫描版 PDF/空白文档提取不到文字时应明确 422，而不是入库后静默失败。"""
-    files = {"file": ("scan.txt", io.BytesIO(b"   \n\t  \n"), "text/plain")}
-    resp = await client.post("/api/v1/notes/upload", files=files)
-    assert resp.status_code == 422
-    assert "提取到文字" in resp.json()["detail"]
-
-
 async def test_upload_with_subject_persists(client, small_markdown_file, test_db):
     """上传时选的学科要落库——否则抽取模型判错就得重传一次。"""
     from sqlalchemy import select

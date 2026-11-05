@@ -9,7 +9,6 @@ import asyncio
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock
 
-import pytest
 from sqlalchemy import select
 
 from app.models.reflection import ReflectionRecord

@@ -1,6 +1,7 @@
+from datetime import datetime, timedelta, timezone
+
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
-from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 
 from app.api.deps import (

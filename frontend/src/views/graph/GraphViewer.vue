@@ -93,10 +93,6 @@ const displayBooks = computed(() => {
 // 书架排序：默认（后端按名称）/ 学科归类 / 知识点规模
 const sortKey = ref('default')
 
-function handleBootstrapDemoDone() {
-  loadGraph()
-}
-
 function openBook(bookId) {
   if (deleteMode.value || editingBookId.value) return
   router.push(`/knowledge/book/${bookId}`)
