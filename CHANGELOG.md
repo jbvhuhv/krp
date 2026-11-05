@@ -7,6 +7,31 @@
 
 ## Unreleased
 
+### 2026-11-05 · 后端默认只绑本机，前端代理目标可配置
+
+- `scripts/run_backend.sh|.bat` 默认 `HOST=127.0.0.1`。原先是硬编码 `0.0.0.0`，配合
+  `backend/.env` 的 `ALLOW_DEV_LOGIN`（白名单手机号可用万能码 `123456`），同网段任何人
+  都能进演示账号。需要手机预览时 `HOST=0.0.0.0` 显式开启。
+- `vite.config.js` 的代理目标改为读 `VITE_API_TARGET`（默认 `http://localhost:8000`），
+  后端换端口不必改代码；`frontend/.env.example` 补充该开关说明。
+- 构建显式把 echarts 拆成独立块（被三个懒加载页面共用，可长期缓存），并设
+  `chunkSizeWarningLimit: 900`。试过把 element-plus 也归入 `manualChunks`，反而会把
+  懒加载页面的组件一并预加载（827kB 单块），首屏更重，故只拆 echarts。
+- `frontend/.env.development.local` 的登录预填手机号从测试账号改为演示号 `13900000001`。
+- `docs/05` 的用例数由 243 更正为 309（308 passed / 1 skipped）。
+
+### 2026-11-05 · 移除仓库内的口令默认值
+
+- `docker-compose.yml` 里 `NEO4J_AUTH` / healthcheck 的口令回退值写的是真实 Neo4j 口令
+  （`${NEO4J_PASSWORD:-…}`，两处），`POSTGRES_PASSWORD` 回退到 `postgres`。因为用的是 `:-`
+  语法，忘建 `.env` 时 `docker compose up` 不会报错，而是**静默用上仓库里公开的口令**——
+  而 `.env.example` 的注释一直写着「强制必填、缺失时直接报错」。两者相互矛盾，且前者是真泄露。
+- 改为 `:?` 强制必填：缺失即中断并打印「请先 cp .env.example .env 并填入口令」。
+  实测缺省时 `docker compose config` 退出码 1 并逐条点出变量名；提供后正常插值。
+- 脱敏：`backend/.env.example` 的 `NEO4J_PASSWORD` / `POSTGRES_PASSWORD` 换成占位符；
+  `docs/05` 里那条明文口令改为指向 `backend/.env`。
+- 说明：口令已进入 git 历史，改配置不等于止损，正式部署仍需轮换一次。
+
 ### 2026-11-05 · 图谱自愈链路修复 + 演示数据落地
 
 **自愈后不补做初始化（会永久缺索引）**

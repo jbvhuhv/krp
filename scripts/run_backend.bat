@@ -26,10 +26,15 @@ if not defined PYTHON (
 )
 
 if not exist "%ROOT%\logs" mkdir "%ROOT%\logs"
+REM Bind loopback by default: with ALLOW_DEV_LOGIN in backend\.env, 0.0.0.0 lets
+REM anyone on the LAN log in with the demo phone + 123456. For phone preview:
+REM   set HOST=0.0.0.0 && scripts\run_backend.bat
+if not defined HOST set "HOST=127.0.0.1"
 echo [OK] Python : %PYTHON%
 echo [OK] Backend: %BACKEND%
+echo [OK] Listen : %HOST%:8000
 echo [OK] Logs   : %ROOT%\logs\be_out.log
 
 cd /d "%BACKEND%"
-"%PYTHON%" -m uvicorn app.main:app --host 0.0.0.0 --port 8000 >> "%ROOT%\logs\be_out.log" 2>> "%ROOT%\logs\be_err.log"
+"%PYTHON%" -m uvicorn app.main:app --host %HOST% --port 8000 >> "%ROOT%\logs\be_out.log" 2>> "%ROOT%\logs\be_err.log"
 endlocal
