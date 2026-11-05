@@ -237,26 +237,32 @@ watch(
       </div>
     </div>
 
+    <div class="subject-tabs" role="tablist" aria-label="按学科浏览">
+      <button
+        class="subject-tab"
+        :class="{ active: !subjectFilter }"
+        role="tab"
+        :aria-selected="!subjectFilter"
+        @click="handleSubjectChange('')"
+      >
+        全部
+      </button>
+      <button
+        v-for="subject in SUBJECT_OPTIONS"
+        :key="subject"
+        class="subject-tab"
+        :class="{ active: subjectFilter === subject }"
+        role="tab"
+        :aria-selected="subjectFilter === subject"
+        @click="handleSubjectChange(subject)"
+      >
+        {{ subject }}
+      </button>
+    </div>
+
     <div class="toolbar">
       <span class="result-count">共 {{ total }} 个图谱</span>
       <div class="toolbar-right">
-        <el-select
-          :model-value="subjectFilter"
-          class="subject-filter"
-          size="small"
-          clearable
-          filterable
-          placeholder="按学科筛选"
-          aria-label="按学科筛选"
-          @change="handleSubjectChange"
-        >
-          <el-option
-            v-for="subject in SUBJECT_OPTIONS"
-            :key="subject"
-            :label="subject"
-            :value="subject"
-          />
-        </el-select>
         <div class="sort-buttons">
           <el-button
             :type="sortBy === 'newest' ? 'primary' : 'default'"

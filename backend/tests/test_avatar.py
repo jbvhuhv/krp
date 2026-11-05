@@ -586,19 +586,21 @@ class TestAvatarAPI:
 
     async def test_get_public_avatar_online(self, client, mock_avatar_service):
         mock_avatar_service.get_by_avatar_id = AsyncMock(return_value=SimpleNamespace(
-            id="avatar-1", status="online", tone="lively",
+            id="avatar-1", user_id="u1", status="online", tone="lively",
             welcome_message="你好", knowledge_scope=["物理"], profile=None,
         ))
 
         response = await client.get("/api/v1/avatar/avatar-1")
 
         assert response.status_code == 200
-        assert response.json()["welcome_message"] == "你好"
+        body = response.json()
+        assert body["welcome_message"] == "你好"
+        assert "owner_name" in body
     async def test_get_public_avatar_hides_profile_internals(
         self, client, mock_avatar_service
     ):
         mock_avatar_service.get_by_avatar_id = AsyncMock(return_value=SimpleNamespace(
-            id="avatar-1", status="online", tone="lively",
+            id="avatar-1", user_id="u1", status="online", tone="lively",
             welcome_message="你好", knowledge_scope=["物理"],
             profile={
                 "domain_distribution": {"物理": 3},

@@ -1,11 +1,13 @@
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { avatarApi } from '@/api'
+import { useUserStore } from '@/stores/user'
 
 const route = useRoute()
 const router = useRouter()
+const userStore = useUserStore()
 const avatarId = computed(() => route.params.avatarId)
 
 const DEFAULT_WELCOME = '你好，我是你的 AI 数字分身。我已经学习了你的知识笔记，随时可以为你答疑解惑。'
@@ -52,6 +54,38 @@ const domainDistribution = computed(() => {
 
 const profileSummary = computed(() => avatarMeta.value?.profile?.summary || '')
 
+// 作者身份：后端只下发昵称（不下发手机号），未设置时回退为通用称呼
+const ownerName = computed(() => avatarMeta.value?.owner_name || '')
+const headerTitle = computed(() =>
+  ownerName.value ? `${ownerName.value} 的知识分身` : 'AI 数字分身',
+)
+
+// 返回逻辑：登录用户回自己的分身管理页；访客去公开的知识广场，避免撞登录墙
+function goBack() {
+  router.push(userStore.isLoggedIn ? '/avatar' : '/community')
+}
+
+function goCreateAvatar() {
+  if (userStore.isLoggedIn) {
+    router.push('/avatar')
+  } else {
+    ctaClicked = true
+    userStore.openLoginModal()
+  }
+}
+
+// 从本页发起登录后，登录成功自动带去分身管理页，不让用户再点一次
+let ctaClicked = false
+watch(
+  () => userStore.isLoggedIn,
+  (loggedIn) => {
+    if (loggedIn && ctaClicked) {
+      ctaClicked = false
+      router.push('/avatar')
+    }
+  },
+)
+
 async function loadAvatarMeta() {
 
   try {
@@ -66,10 +100,6 @@ async function loadAvatarMeta() {
   } catch {
     /* 公开信息不可用时保留默认推荐问题 */
   }
-}
-
-function goBack() {
-  router.push('/avatar')
 }
 
 const messages = ref([])
@@ -370,11 +400,14 @@ onBeforeUnmount(() => {
           <div class="status-dot" :class="{ online: connected }"></div>
         </div>
         <div class="header-info">
-          <h1 class="header-name">数字分身</h1>
+          <h1 class="header-name">{{ headerTitle }}</h1>
           <p class="header-status">
             {{ connected ? '在线 · 随时为你解答' : '连接中...' }}
           </p>
         </div>
+        <button v-if="!userStore.isLoggedIn" class="header-cta" @click="goCreateAvatar">
+          创建我的分身
+        </button>
       </header>
 
       <div ref="messagesContainer" class="chat-messages">
@@ -453,7 +486,9 @@ onBeforeUnmount(() => {
                 <circle cx="12" cy="12" r="4" />
               </svg>
             </div>
-            <p class="welcome-title">我是你的 AI 数字分身</p>
+            <p class="welcome-title">
+              {{ ownerName ? `我是「${ownerName}」的 AI 数字分身` : '我是你的 AI 数字分身' }}
+            </p>
             <p class="welcome-sub">选一个话题快速开始，或直接输入你的问题</p>
             <div
               v-if="knowledgeScope.length || domainDistribution.length || profileSummary"
@@ -485,6 +520,15 @@ onBeforeUnmount(() => {
               >
                 <span class="suggest-dot"></span>
                 {{ q }}
+              </button>
+            </div>
+            <div v-if="!userStore.isLoggedIn" class="cta-banner">
+              <div class="cta-copy">
+                <p class="cta-title">想把你的笔记也变成这样的知识分身？</p>
+                <p class="cta-desc">上传课件，AI 自动整理成知识图谱，几分钟拥有你的专属答疑分身</p>
+              </div>
+              <button class="cta-btn" @click="goCreateAvatar">
+                免费创建我的分身 →
               </button>
             </div>
           </div>

@@ -71,7 +71,9 @@ def _to_avatar_out(avatar, scope: list[str] | None = None) -> AvatarOut:
     )
 
 
-def _to_public_avatar_out(avatar, scope: list[str] | None = None) -> AvatarOut:
+def _to_public_avatar_out(
+    avatar, scope: list[str] | None = None, owner_name: str | None = None
+) -> AvatarOut:
     """公开访问（访客视角）时仅回吐可展示的知识画像字段，
     不下发 mastery_overview / reflection_style 等主人学习状态细节。"""
     profile = None
@@ -89,6 +91,7 @@ def _to_public_avatar_out(avatar, scope: list[str] | None = None) -> AvatarOut:
         knowledge_scope=knowledge_scope,
         avatar_url=getattr(avatar, "avatar_url", None),
         profile=profile,
+        owner_name=owner_name,
     )
 
 
@@ -245,7 +248,8 @@ async def get_avatar(
             status_code=status.HTTP_404_NOT_FOUND, detail="分身不存在或已下线"
         )
     scope = await avatar_service.resolve_knowledge_scope(avatar)
-    return _to_public_avatar_out(avatar, scope)
+    owner_name = await avatar_service.get_owner_display_name(avatar.user_id)
+    return _to_public_avatar_out(avatar, scope, owner_name=owner_name)
 
 
 def _parse_incoming(raw: str) -> tuple[str, str | None]:

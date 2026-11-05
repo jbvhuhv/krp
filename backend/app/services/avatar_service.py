@@ -10,6 +10,7 @@ from app.core.logger import get_logger
 from app.models.avatar import Avatar, ChatMessage
 from app.models.note import Note
 from app.models.reflection import ReflectionRecord
+from app.models.user import User
 from app.services.ai_service import AIService
 from app.services.graph_service import GraphService
 from app.services.providers.base import AI_BUSY_MESSAGE, LLM_ERROR_TYPES
@@ -17,7 +18,10 @@ from app.services.providers.base import AI_BUSY_MESSAGE, LLM_ERROR_TYPES
 logger = get_logger(__name__)
 
 
-BLOCK_MESSAGE = "抱歉，该问题超出我的知识范围"
+BLOCK_MESSAGE = (
+    "这个问题超出了我目前学习的知识范围——我只学过主人的笔记内容，"
+    "换个问法，或从推荐话题里挑一个吧。"
+)
 ANONYMOUS_VISITOR = "anonymous"
 
 # 后台回填任务的强引用集合，防止任务被垃圾回收中途取消
@@ -105,6 +109,13 @@ class AvatarService:
             select(Avatar).where(
                 (Avatar.id == avatar_id) | (Avatar.share_token == avatar_id)
             )
+        )
+        return result.scalar_one_or_none()
+
+    async def get_owner_display_name(self, user_id: str) -> str | None:
+        """访客页展示作者身份用：只下发昵称，绝不下发手机号等联系方式。"""
+        result = await self.db.execute(
+            select(User.nickname).where(User.id == user_id)
         )
         return result.scalar_one_or_none()
 

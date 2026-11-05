@@ -140,6 +140,7 @@ def mock_avatar_service():
     service.get_stats = AsyncMock(return_value=None)
     service.rag_search = AsyncMock(return_value=[])
     service.build_share_url = MagicMock(return_value="http://test/avatar/share-token")
+    service.get_owner_display_name = AsyncMock(return_value=None)
     service.resolve_knowledge_scope = AsyncMock(
         side_effect=lambda avatar: list(getattr(avatar, "knowledge_scope", None) or [])
     )

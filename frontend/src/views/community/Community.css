@@ -792,3 +792,35 @@
     flex: 0 0 100%;
   }
 }
+
+/* ===== 学科 Tab 栏（替代下拉筛选）===== */
+.subject-tabs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.subject-tab {
+  padding: 6px 14px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.55);
+  color: #94a3b8;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: all 0.16s ease;
+}
+
+.subject-tab:hover {
+  color: #cbd5e1;
+  border-color: rgba(148, 163, 184, 0.5);
+}
+
+.subject-tab.active {
+  background: rgba(6, 182, 212, 0.16);
+  border-color: rgba(6, 182, 212, 0.55);
+  color: #67e8f9;
+  font-weight: 600;
+}

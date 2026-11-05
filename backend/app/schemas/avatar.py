@@ -36,6 +36,8 @@ class AvatarOut(BaseModel):
     knowledge_scope: list[str] = []
     avatar_url: str | None = None
     profile: KnowledgeProfile | None = None
+    # 公开访问时下发主人昵称，供访客页展示「这是谁的分身」；自己查看时不下发
+    owner_name: str | None = None
 
 
 class SourceRef(BaseModel):
