@@ -21,6 +21,8 @@ backend/.env
 # SQLite WAL 模式会产生这两个附属文件，之前没被 *.db 覆盖，git status 里一直是脏的
 *.db-wal
 *.db-shm
+# 改动前的数据库备份（clean_demo_data / reshape_demo_books 之类脚本手动复制出来的）
+*.db.bak-*
 # 例外：随仓库分发的演示数据（已脱敏，供空库首次启动自动灌入）
 !backend/demo/krp-demo.db
 

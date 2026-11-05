@@ -320,20 +320,37 @@ npm run dev
 
 ### 6. 演示数据（本机 Neo4j）
 
-`demo/neo4j-demo.jsonl` 是随仓库分发的演示图谱快照（555 个知识点，平均掌握度 42.4）。
-它只在**图谱为空**时由 `bootstrap_neo4j` 自动导入；本机库已有真实笔记抽取的节点时，
-快照不会生效，知识画像会显示「平均掌握度 0%」。手动灌入：
+演示图谱最初是从一个被 E2E / 并发测试污染的本地库导出的，直接用会看到「书架上是
+`测试图片笔记.png` × 5、`1.docx`、`E2E-回归测试.md`」和「画像说 702 个知识点、书架只有 285 个」。
+三个脚本负责把它整理成可路演的状态，都可以**先干跑预览、加 `--write` 才落库**，且幂等可重复执行：
 
 ```bash
-python backend/scripts/seed_local_graph.py                    # 只预览
-python backend/scripts/seed_local_graph.py --write            # 合并导入（保留既有节点）
-python backend/scripts/seed_local_graph.py --write --replace  # 先清空该用户图谱，得到干净演示态
+python backend/scripts/seed_local_graph.py      --write   # ① 灌入图谱快照（掌握度 42.4）
+python backend/scripts/reshape_demo_books.py    --write   # ② 合并重复书、规范书名、挂回悬空知识点
+python backend/scripts/clean_demo_data.py       --write   # ③ 清掉并发测试帖与空账号
 ```
 
-导入后可看到：掌握度 33.6、熟练度 9.3%、巩固度 28.8%、复习覆盖 58.8%（合并模式，
-含本机原有节点）。用 `--replace` 则是快照原值 42.4 / 74.2%。
+整理后的演示态（演示号 `13900000001`）：
+
+| 项 | 值 |
+|---|---|
+| 书架 | 12 本（操作系统 · 进程与内存管理 / 材料力学基础 / 跨学科 · 综合笔记 …） |
+| 知识点 | 702 个，全部能在书架上找到 |
+| 笔记 | 12 条，与书本一一对应，知识点「查看来源」有真实落点 |
+| 画像 | 掌握度 33.6 / 熟练度 9.3% / 巩固度 28.8% / 复习覆盖 58.8% / 广度 91.1 / 体量 86.2 |
 
 访客对话页地址：`http://localhost:5173/chat/{avatarId}`（无需登录）。
+
+### 7. 演示当天检查
+
+1. **先起 Neo4j，再起后端。**`scripts/start_neo4j.sh`（或 `.bat`）拉起本机实例；后端启动时若连不上，
+   会降级为内置只读图谱（索引与演示数据要等自愈后补建，见 `docs/07-DEBUG.md`）。
+2. **跑一遍上面三个脚本**，确认书架与画像对得上。
+3. **后端默认只绑 `127.0.0.1`。**`backend/.env` 若开着 `ALLOW_DEV_LOGIN`，白名单手机号可用万能码
+   `123456` 登录——绑 `0.0.0.0` 会让同网段任何人都能进演示账号。需要手机预览时用
+   `HOST=0.0.0.0 ./scripts/run_backend.sh`，演示完改回来。
+4. **登录页预填**来自 `frontend/.env.development.local` 的 `VITE_DEBUG_PHONE`，确认是演示号。
+5. **后端换端口**时把 `VITE_API_TARGET` 写进 `frontend/.env.development.local`，不必改 `vite.config.js`。
 
 ## 部署（自建服务器）
 

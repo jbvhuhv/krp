@@ -7,6 +7,11 @@ from app.services.graph.constants import (
     UNCLASSIFIED_SUBJECT,
 )
 
+# 「知识体量」「知识广度」的对数刻度上限：达到此量级记满 100 分。
+# 取一个学期能覆盖到的规模，避免知识点一多就恒定封顶、维度失去区分度。
+VOLUME_FULL_SCALE = 2000
+BREADTH_FULL_SCALE = 20
+
 
 def build_study_profile(
     total: int,
@@ -26,9 +31,11 @@ def build_study_profile(
 
     solid_ratio = (solid / total) * 100
     reviewed_ratio = (reviewed / total) * 100
-    # 对数刻度：1 本书 ≈ 25 分，10 本 ≈ 75 分，量级感知比线性更贴近直觉
-    volume = min(100.0, math.log1p(total) / math.log1p(300) * 100)
-    breadth = min(100.0, math.log1p(subject_count) / math.log1p(12) * 100)
+    # 对数刻度：量级感知比线性更贴近直觉。参考上限取「一个学期能读到的量」——
+    # 定得太小会让维度恒定封顶（300 个知识点 / 12 个学科时两项永远是 100，
+    # 雷达图看起来是「六边形战士但一题不会」），失去区分度。
+    volume = min(100.0, math.log1p(total) / math.log1p(VOLUME_FULL_SCALE) * 100)
+    breadth = min(100.0, math.log1p(subject_count) / math.log1p(BREADTH_FULL_SCALE) * 100)
     proficient_ratio = (proficient / total) * 100
     dimensions = [
         {"name": "掌握度", "value": round(avg_mastery, 1),
