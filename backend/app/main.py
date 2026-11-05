@@ -25,12 +25,36 @@ setup_logging(level=logging.DEBUG if settings.DEBUG else logging.INFO)
 logger = get_logger(__name__)
 
 
-async def _recover_graph_backend(driver, interval: float = 60.0) -> None:
+async def _warm_graph(driver) -> None:
+    """图谱侧的全部幂等初始化：向量索引 / 属性索引 / 演示图谱 / 数据规范化。
+
+    必须同时挂在「启动」和「自愈成功」两个时机上。原因：这四项都要连 Neo4j，
+    Neo4j 比应用晚就绪时启动期会全部失败；早期实现只在启动期调用一次，于是
+    自愈把后端切回 Neo4j 后，索引依然缺失（图谱查询退化为全标签扫描），
+    演示图谱也不会导入（图谱页一直是空的），只能靠重启进程修复。
+
+    四项自身都是幂等的（IF NOT EXISTS / MERGE / 只处理脏数据），重复调用安全。
+    """
+    from app.core.demo_bootstrap import bootstrap_neo4j
+    from app.core.graph_migrations import normalize_last_reviewed
+    from app.services.graph import init_property_indexes, init_vector_index
+
+    await init_vector_index(driver)
+    # 属性索引：图谱查询几乎都按 (user_id, node_type) 过滤，缺索引时是全标签扫描
+    await init_property_indexes(driver)
+    # 图谱为空时导入演示图谱（首次部署 / 本地首次运行即可看到完整知识图谱）
+    await bootstrap_neo4j(driver)
+    # 数据规范化：早期版本把 last_reviewed 写成 ISO 字符串，会让「今日反思」500（幂等）
+    await normalize_last_reviewed(driver)
+
+
+async def _recover_graph_backend(driver, interval: float = 30.0) -> None:
     """降级后自愈：定期重探 Neo4j，成功即把图谱后端切回 Neo4j（无需重启进程）。
 
-    场景：宿主机重启时应用可能比 Neo4j 先就绪。启动探测带了重试，但若 Neo4j 启动
-    更慢（磁盘慢、数据量大），仍会降级为内置只读图谱 —— 此时由本协程兜底恢复，
-    避免「必须手工重启容器才能恢复」。
+    场景：宿主机重启时应用可能比 Neo4j 先就绪。启动探测只做短重试，避免把启动
+    拖成几十秒；仍不就绪就降级为内置只读图谱，由本协程兜底恢复。
+
+    切回后必须补跑 `_warm_graph`：启动期失败的索引创建与演示数据导入不会自己重来。
     """
     from app.services.graph import neo4j_available, set_neo4j_available
 
@@ -45,32 +69,28 @@ async def _recover_graph_backend(driver, interval: float = 60.0) -> None:
             continue
         set_neo4j_available(True)
         logger.warning("Neo4j 已恢复：图谱后端自动切回 Neo4j")
+        # 启动期没机会做的初始化，现在补做（幂等）
+        await _warm_graph(driver)
+        logger.warning("Neo4j 已恢复：索引与演示数据已完成补建/补导")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from app.core.database import neo4j_driver
-    from app.core.demo_bootstrap import bootstrap_neo4j, bootstrap_sqlite
+    from app.core.demo_bootstrap import bootstrap_sqlite
     from app.core.schema_migrations import ensure_schema
-    from app.services.graph import init_property_indexes, init_vector_index
+    from app.services.graph import ping_neo4j
     from app.services.note_recovery import recover_stale_notes
 
     # 必须在建表之前：空库时灌入演示数据（已存在数据则不做任何改动）
     bootstrap_sqlite()
     await ensure_schema()
-    await init_vector_index(neo4j_driver)
-    # 属性索引：图谱查询几乎都按 (user_id, node_type) 过滤，缺索引时是全标签扫描
-    await init_property_indexes(neo4j_driver)
-    # 图谱为空时导入演示图谱（首次部署 / 本地首次运行即可看到完整知识图谱）
-    await bootstrap_neo4j(neo4j_driver)
-    # 探测 Neo4j 可用性：不可用时图谱退回「内置只读演示图谱」，避免整页空白
-    from app.services.graph import ping_neo4j
-
-    await ping_neo4j(neo4j_driver)
-    # 数据规范化：早期版本把 last_reviewed 写成 ISO 字符串，会让「今日反思」500（幂等）
-    from app.core.graph_migrations import normalize_last_reviewed
-
-    await normalize_last_reviewed(neo4j_driver)
+    # 先探测再初始化：Neo4j 未就绪时直接初始化，每个语句都要等一次连接超时，
+    # 实测会把启动拖到 70 秒以上（0.0.0.0 上的健康检查这段时间直接拒连）。
+    # 这里只做短重试，剩下的交给 _recover_graph_backend 在后台兜底。
+    graph_ready = await ping_neo4j(neo4j_driver, attempts=2, delay=2.0)
+    if graph_ready:
+        await _warm_graph(neo4j_driver)
     # 抽取任务在进程内执行，服务重启会丢失排队任务；启动时自愈，避免笔记永远停在 pending
     await recover_stale_notes()
     if settings.SCHEDULER_ENABLED:
@@ -167,6 +187,12 @@ async def health(deep: bool = False):
         checks["neo4j"] = "ok"
     except Exception as exc:  # pragma: no cover - 依赖外部服务
         checks["neo4j"] = f"error: {type(exc).__name__}"
+        # 探测失败就把可用标志翻回 False：否则标志只在启动/自愈协程里变，
+        # Neo4j 重启或连接池失效后会出现「deep 检查说不可用、浅检查说可用」的矛盾，
+        # 且自愈协程因为标志为 True 永远不再重探（图谱写操作会静默失败）。
+        from app.services.graph import set_neo4j_available
+
+        set_neo4j_available(False)
 
     dirty = None
     if checks["neo4j"] == "ok":
@@ -182,7 +208,8 @@ async def health(deep: bool = False):
     return {
         "status": status,
         **checks,
-        "graph_backend": backend,
+        # 重新读一次：上面探测失败时可能已把标志翻回 False，用函数开头的旧值会自相矛盾
+        "graph_backend": {True: "neo4j", False: "local"}.get(neo4j_available(), "unknown"),
         "dirty_last_reviewed": dirty,
     }
 

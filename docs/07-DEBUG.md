@@ -9,7 +9,13 @@
 **排查路径**：
 - 确认 Neo4j 进程在运行：浏览器访问 `http://localhost:7474`，并确认 Bolt 端口 `7687` 已监听。
 - 核对 `backend/.env`：`NEO4J_URI`（默认 `bolt://localhost:7687`）、`NEO4J_USER`、`NEO4J_PASSWORD`。
-- 启动命令：`docker compose up -d neo4j`（仓库根目录需先建 `.env` 写入 `NEO4J_PASSWORD`）；`deps/neo4j-build/` 的本地方式未随仓库分发，无法在新克隆中使用。
+- 启动方式二选一：
+  - 本机已有 `deps/` 运行时：`./scripts/start_neo4j.sh`（Windows：`scripts\start_neo4j.bat`）。deps 里那份不含官方 `bin/`，所以不能用 `neo4j start`，脚本内部是直接拉起 `org.neo4j.server.CommunityEntryPoint`。
+  - 新克隆的仓库（没有 `deps/`）：`docker compose up -d neo4j`（仓库根目录需先建 `.env` 写入 `NEO4J_PASSWORD`）。
+- **启动顺序**：先起 Neo4j 再起后端更省事。后端启动探测只做 2 次短重试（约 6 秒）就降级，剩下的交给后台自愈协程（每 30 秒重探一次）：恢复后除了把图谱后端切回 Neo4j，还会**补跑** `init_vector_index` / `init_property_indexes` / `bootstrap_neo4j` / `normalize_last_reviewed`，所以索引与演示数据会自己补齐，不用重启后端。
+  - 验证方式：看日志出现「Neo4j 已恢复：索引与演示数据已完成补建/补导」，或 `SHOW INDEXES` 里出现 `knowledge_user_idx` / `knowledge_user_type_idx` / `knowledge_note_idx`。
+  - 2026-11-05 之前的版本没有这一步，冷启动后索引会永久缺失，只能重启进程修复。
+- 另注意：`deps/` 那份 `target/conf/neo4j.conf` 关闭了认证（`dbms.security.auth_enabled=false`），密码不参与校验；Docker 版才校验。两种环境的密码行为不同，排查时别混。
 - 图谱不可用时后端会优雅降级（不抛 500），但知识点不会写入图中；恢复 Neo4j 后需对相关笔记重新抽取。
 
 ## 2. MaaS API 超时 / 鉴权失败

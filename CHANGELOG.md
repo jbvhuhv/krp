@@ -7,6 +7,59 @@
 
 ## Unreleased
 
+### 2026-11-05 · 图谱自愈链路修复 + 演示数据落地
+
+**自愈后不补做初始化（会永久缺索引）**
+
+- 复现：先起后端、后起 Neo4j，`init_vector_index` / `init_property_indexes` /
+  `bootstrap_neo4j` / `normalize_last_reviewed` 在启动期全部失败；自愈协程只把
+  `neo4j_available` 翻回 `True`，不重跑初始化。结果是 `/health` 显示 `graph_backend: neo4j`，
+  但 `SHOW INDEXES` 里没有 `knowledge_user_idx` / `knowledge_user_type_idx` / `knowledge_note_idx`
+  （图谱查询退化为全标签扫描），演示图谱也永远不导入。
+- 修复：抽出 `_warm_graph()`（四项幂等初始化的唯一入口），启动期与自愈成功后各调一次。
+
+**启动被 Neo4j 拖慢 70 秒**
+
+- 原实现先跑四个初始化再探测可用性，Neo4j 离线时每个语句各等一次连接超时，合计约 75 秒，
+  这段时间健康检查直接拒连。现在先探测（2 次短重试，约 6 秒），不在线就跳过初始化，
+  剩下的交给自愈协程（重探间隔 60 → 30 秒）。实测冷启动就绪时间 13 秒。
+
+**健康标志位与实际连接脱节**
+
+- `/health?deep=1` 探到 Neo4j 报错时，把 `neo4j_available` 翻回 `False`，让自愈协程接手；
+  响应里的 `graph_backend` 改为重新读取标志，避免「deep 说不可用、浅说可用」的自相矛盾。
+
+**本机演示数据从未生效**
+
+- `demo/neo4j-demo.jsonl`（555 知识点，平均掌握度 42.4）只在图谱为空时导入；本机库已有
+  真实笔记节点，于是快照永远不生效，`study-profile` 返回「平均掌握度 0%」，
+  知识花园/复习队列全是直线。新增 `backend/scripts/seed_local_graph.py`：
+  按手机号改写 `user_id` 后 MERGE 导入（幂等），`--replace` 可先清空该用户图谱；
+  指向本地不存在笔记的 `source_note_id` 置空，避免「查看来源」404。
+- 实测（合并模式）：702 个知识点，掌握度 33.6、熟练度 9.3%、巩固度 28.8%、
+  复习覆盖 58.8%、15 个学科；今日反思可正常出 5 道题。
+
+**测试**
+
+- 新增 `tests/test_graph_selfheal.py`（3 例）：自愈必须调用 `_warm_graph`、`_warm_graph`
+  的调用顺序与幂等、deep 健康检查失败时标志与响应一致。全量 308 passed / 1 skipped。
+
+### 2026-11-05 · 本地 Neo4j 启动脚本 + 文档纠偏
+
+- 新增 `scripts/start_neo4j.sh` / `scripts/start_neo4j.bat`：直接拉起 `deps/neo4j-build`
+  里的本地实例。该运行时是构建产物、缺官方 `bin/`，`neo4j start` 不可用，只能走
+  `org.neo4j.server.CommunityEntryPoint`。脚本自动定位 Java（`JAVA_CMD` → `JAVA_HOME`
+  → `deps/jdk21/*` → `PATH`），Bolt 7687 已在监听时直接跳过，日志追加到 `logs/neo4j.log`。
+- 文档补上两条启动路径：本机有 `deps/` 用脚本，新克隆用 `docker compose up -d neo4j`
+  （README / `docs/04` / `docs/05` / `docs/07` 同步）。同时明确两点：
+  `deps` 那份 `conf/neo4j.conf` 关闭了认证（`dbms.security.auth_enabled=false`），
+  `NEO4J_PASSWORD` 不参与校验，与 Docker 版行为不同；
+  必须**先起 Neo4j 再起后端**——启动期连不上会降级为内置只读图谱，且索引与演示数据
+  初始化只在启动期跑一次，后续自愈不会补做。
+- 修正 README 第 2 条功能描述中重复出现的一整句。
+- 约定 `.bat` 保持 ASCII-only：cmd.exe 按 ANSI 解析批处理文件，UTF-8 中文会让整行被拆坏
+  （`set` 被切成 `th:`），本次已实测踩到。
+
 ### 2026-11-05 · 演示数据量纲与答题闭环
 
 **演示数据（评委会直接看到的两个硬伤）**

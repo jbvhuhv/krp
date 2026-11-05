@@ -20,7 +20,7 @@
 本平台面向大学生，提供"笔记 → 知识图谱 → AI 反思 → 数字分身"的知识闭环管理能力：
 
 1. **笔记上传与知识图谱生成** — 上传 Markdown/PDF/Word/TXT/图片笔记，AI 自动抽取知识点与关系，生成可视化知识图谱（图片经多模态模型 OCR 识别后汇入同一抽取链路）
-2. **AI 定时主动提问反思** — 基于知识图谱与间隔重复策略，定时生成反思问题，评估掌握度；出题顺序由「笔记新鲜度 / 分身引用 / 节点查看」三类弱信号调整（只排序、不改分），每道题标注出题理由，节点详情可查看掌握度溯源（改前 → 改后与本次权重）；出题顺序由「笔记新鲜度 / 分身引用 / 节点查看」三类弱信号调整（只排序、不改分），每道题标注出题理由，节点详情可查看掌握度溯源（改前 → 改后与本次权重）
+2. **AI 定时主动提问反思** — 基于知识图谱与间隔重复策略，定时生成反思问题，评估掌握度；出题顺序由「笔记新鲜度 / 分身引用 / 节点查看」三类弱信号调整（只排序、不改分），每道题标注出题理由，节点详情可查看掌握度溯源（改前 → 改后与本次权重）
 3. **AI 数字分身发布** — 将个人知识图谱发布为可对话的 AI 角色，访客可基于其知识库提问
 
 ## 界面展示
@@ -101,7 +101,7 @@ demo1/
 ├── .editorconfig                          # 编辑器编码/换行/缩进统一规范
 ├── .gitignore                             # 忽略 .env/*.db/*.log/uploads/dist 等
 ├── docker-compose.yml                     # 容器编排（可选/生产参考）：Neo4j + PostgreSQL + Redis + Backend
-├── scripts/                               # 本地脚本（setup.bat / run_backend.bat / ci.bat）
+├── scripts/                               # 本地脚本（setup / run_backend / start_neo4j / ci）
 ├── deps/                                  # 第三方运行时依赖（JDK / Maven / Neo4j，本地，已排除版本控制）
 ├── logs/                                  # 运行时日志（后端 / 前端输出）
 ├── docs/                                  # 全部项目文档（按阅读顺序编号）
@@ -221,7 +221,7 @@ demo1/
 ### 0. 演示数据（开箱即有内容）
 
 仓库内置一份**已脱敏**的演示数据 `backend/demo/`（32 篇笔记、12 个社区作品、
-以及一份**内置只读知识图谱** 719 个知识点 / 607 条关系）。**首次启动时若数据库或图谱为空会自动灌入**，
+以及一份**内置只读知识图谱**：555 个知识点 + 31 本书 + 133 个章节、607 条关系）。**首次启动时若数据库或图谱为空会自动灌入**，
 因此克隆后直接运行就能看到完整界面，不会是满屏"暂无数据"。
 
 - 演示账号：手机号 **13900000001**，验证码 **123456**（需 `DEBUG=true` + `ALLOW_DEV_LOGIN=true`，
@@ -231,6 +231,12 @@ demo1/
 - **没有 Neo4j 也能看到知识图谱**：`GRAPH_BACKEND=auto`（默认）时，Neo4j 不可用会自动切换到
   内置只读演示图谱（只对演示账号生效，其他用户依然看到空图谱；写操作会返回明确提示）。
   如需图谱的完整读写能力，配置 `NEO4J_URI/NEO4J_USER/NEO4J_PASSWORD` 即可。
+- **演示模式也能答题闭环**：图谱文件本身只读，但答题产生的掌握度会写进关系库的
+  `node_mastery_overrides` 覆盖层（读图谱时合并）。所以答完题后掌握度、知识画像、
+  第二天的出题队列都会变，不会"答完跟没答一样"。想从零开始演示，清空 `node_mastery_overrides` 即可。
+- **演示图谱是合成快照**：掌握度与复习时间由节点 id 稳定哈希生成（`backend/scripts/refresh_demo_graph.py`），
+  用于展示"学期中段"的学习状态，不是某个真实用户的记录。反思历史的掌握度账本由
+  `backend/scripts/backfill_demo_ledger.py` 按应用公式回放生成，两者可互相解释。
 
 ### 1. 环境要求
 
@@ -256,13 +262,21 @@ docker-compose up -d
 | Neo4j Bolt | 7687 | 图数据库协议端口 |
 | Redis | 6379 | 缓存 |
 
-> **本地开发（无 Docker）：** 关系库使用 SQLite（无需启动）；Redis 可选，未配置时 `/auth/send-code` 返回 503（`DEBUG=true` 下 `123456` 万能码可经 `/auth/login` 旁路）。Neo4j 可用 Docker 单独启动或 `deps/` 本地启动：
+> **本地开发（无 Docker）：** 关系库使用 SQLite（无需启动）；Redis 可选，未配置时 `/auth/send-code` 返回 503（`DEBUG=true` 下 `123456` 万能码可经 `/auth/login` 旁路）。Neo4j 二选一：
 >
 > ```bash
-> docker-compose up -d neo4j
+> # A. 本机已有 deps/ 里的 Neo4j 运行时（作者开发机；仓库里不含该目录）
+> ./scripts/start_neo4j.sh            # Windows: scripts\start_neo4j.bat
+>
+> # B. 新克隆的仓库（没有 deps/，只能用容器）
+> docker compose up -d neo4j
 > ```
 >
-> Bolt `7687` / HTTP `7474`（`NEO4J_URI=bolt://localhost:7687`，用户 `neo4j` / 密码 `krp123456`）。
+> Bolt `7687` / HTTP `7474`（`NEO4J_URI=bolt://localhost:7687`）。
+>
+> 两个容易踩的点：
+> - **`deps/` 那份实例的 `conf/neo4j.conf` 关闭了认证**（`dbms.security.auth_enabled=false`），`NEO4J_PASSWORD` 不参与校验；Docker 版才真正校验密码。换环境时不要假设「本地能连 = 线上能连」。
+> - **先起 Neo4j，再起后端**。后端在 Neo4j 不可用时会降级为内置只读图谱，且启动期的数据/索引初始化不会在后续自愈时补做，图谱会一直是空的（详见 `docs/07-DEBUG.md`）。
 >
 > 提示：`deps/` 目录仅供本项目开发机使用（内含本地 JDK / Maven / Neo4j 构建产物），已从版本控制中排除，开源使用者无需关心。
 
@@ -303,6 +317,21 @@ npm run dev
 ```
 
 访问 `http://localhost:5173`，Vite 代理 `/api` 到后端 `http://localhost:8000`。
+
+### 6. 演示数据（本机 Neo4j）
+
+`demo/neo4j-demo.jsonl` 是随仓库分发的演示图谱快照（555 个知识点，平均掌握度 42.4）。
+它只在**图谱为空**时由 `bootstrap_neo4j` 自动导入；本机库已有真实笔记抽取的节点时，
+快照不会生效，知识画像会显示「平均掌握度 0%」。手动灌入：
+
+```bash
+python backend/scripts/seed_local_graph.py                    # 只预览
+python backend/scripts/seed_local_graph.py --write            # 合并导入（保留既有节点）
+python backend/scripts/seed_local_graph.py --write --replace  # 先清空该用户图谱，得到干净演示态
+```
+
+导入后可看到：掌握度 33.6、熟练度 9.3%、巩固度 28.8%、复习覆盖 58.8%（合并模式，
+含本机原有节点）。用 `--replace` 则是快照原值 42.4 / 74.2%。
 
 访客对话页地址：`http://localhost:5173/chat/{avatarId}`（无需登录）。
 
