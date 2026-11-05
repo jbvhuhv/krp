@@ -427,7 +427,7 @@ docker run --rm -p 8000:8000 \
 | WS | `/api/v1/avatar/chat/{avatarId}` | 访客与分身流式对话（含来源标注） |
 | GET | `/api/v1/notifications` | 获取站内通知列表（含未读数） |
 | PUT | `/api/v1/notifications/{notificationId}/read` | 标记通知已读 |
-| GET | `/api/v1/community/posts` | 知识广场公开图谱列表（分页/标签过滤/排序，无需登录） |
+| GET | `/api/v1/community/posts` | 知识广场公开图谱列表（分页 `page`/`size`、标签 `tag`、搜索 `q`、学科 `subject`、排序 `sort=newest\|hottest`，无需登录） |
 | GET | `/api/v1/community/my-posts` | 当前用户发布的帖子列表 |
 | GET | `/api/v1/community/posts/{postId}` | 图谱详情（浏览量+1，无需登录）；已撤回的帖子仅作者本人可读，其他人 404 |
 | POST | `/api/v1/community/posts` | 发布个人图谱到广场（需登录） |

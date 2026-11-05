@@ -16,6 +16,9 @@ class NodeBase(BaseModel):
 class NodeCreate(NodeBase):
     name: str = Field(..., min_length=1, max_length=200)
     source_note_id: str | None = None
+    # 不传时由 type 推导（type='book' → 书根），避免漏传后被存成知识点：
+    # 书架按 node_type='book' 查，漏传的书会「建成功但看不见」。
+    node_type: str | None = None
 
 
 class NodeUpdate(BaseModel):

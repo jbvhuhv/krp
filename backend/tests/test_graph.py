@@ -642,3 +642,45 @@ class TestWriteExtractionResultDedupe:
         names = [c["name"] for c in calls]
         assert names.count("梯度下降") == 1
         assert created == 3  # 书根 + 2 个不同知识点
+
+
+class TestCreateNodeTypeInference:
+    """建节点漏传 node_type 时按 type 推导。
+
+    书架按 node_type='book' 查询，过去默认死写 knowledge，
+    于是「建书成功但书架里看不到」，属于最难排查的一类坑。
+    """
+
+    async def test_book_type_without_node_type_becomes_book(
+        self, client, mock_graph_service
+    ):
+        resp = await client.post(
+            "/api/v1/graph/nodes",
+            json={"name": "操作系统", "type": "book"},
+        )
+
+        assert resp.status_code == 201
+        data = resp.json()
+        assert data["node_type"] == "book"
+        kwargs = mock_graph_service.create_node.await_args.kwargs
+        assert kwargs["node_type"] == "book"
+
+    async def test_concept_type_without_node_type_stays_knowledge(
+        self, client, mock_graph_service
+    ):
+        resp = await client.post(
+            "/api/v1/graph/nodes",
+            json={"name": "进程调度", "type": "concept"},
+        )
+
+        assert resp.status_code == 201
+        assert resp.json()["node_type"] == "knowledge"
+
+    async def test_explicit_node_type_wins(self, client, mock_graph_service):
+        resp = await client.post(
+            "/api/v1/graph/nodes",
+            json={"name": "自定义分类", "type": "concept", "node_type": "category"},
+        )
+
+        assert resp.status_code == 201
+        assert resp.json()["node_type"] == "category"

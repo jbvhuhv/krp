@@ -30,6 +30,7 @@ from app.schemas.graph import (
     TreeResponse,
 )
 from app.services.ai_service import AIService
+from app.services.graph.constants import NODE_TYPE_BOOK, NODE_TYPE_KNOWLEDGE
 from app.services.graph_service import GraphService
 
 router = APIRouter()
@@ -132,6 +133,11 @@ async def create_node(
     user_id: str = Depends(get_current_user_id),
     graph_service: GraphService = Depends(get_graph_service),
 ):
+    # 漏传 node_type 时按 type 推导：书架的查询条件是 node_type='book'，
+    # 若默写成 knowledge，书会「建成功但看不见」，排查成本极高。
+    node_type = payload.node_type or (
+        NODE_TYPE_BOOK if payload.type == NODE_TYPE_BOOK else NODE_TYPE_KNOWLEDGE
+    )
     node_id = await graph_service.create_node(
         user_id=user_id,
         name=payload.name,
@@ -139,7 +145,7 @@ async def create_node(
         type=payload.type,
         source_note_id=payload.source_note_id,
         subject=payload.subject,
-        node_type=payload.node_type,
+        node_type=node_type,
         parent_id=payload.parent_id,
         origin=payload.origin,
         x=payload.x,
@@ -151,7 +157,7 @@ async def create_node(
         summary=payload.summary,
         type=payload.type,
         subject=payload.subject,
-        node_type=payload.node_type,
+        node_type=node_type,
         parent_id=payload.parent_id,
         source_note_id=payload.source_note_id,
         origin=payload.origin,
