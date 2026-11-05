@@ -837,13 +837,19 @@ async def fork_post(
         )
 
     created_node_ids: list[str] = []
+    # 与书架 node_count 对齐：只统计书根之下的分类/知识点，
+    # 否则 fork 返回数会比书架显示多 1（书根节点），用户会以为克隆丢了内容。
+    created_non_book_count = 0
     try:
         old_to_new = {}
         for node in raw_nodes:
+            is_book = node.get("node_type") == NODE_TYPE_BOOK
             new_id = await graph_service.create_node(
                 user_id=user_id,
-                name=node.get("name", "未命名"),
-                summary=node.get("summary", ""),
+                # 书根用帖子标题命名：克隆提示说的是《帖子标题》，
+                # 沿用原书文件名（如 persona_A_note.md）会让用户对不上号
+                name=post.title if is_book else node.get("name", "未命名"),
+                summary=(post.description or "") if is_book else node.get("summary", ""),
                 type=node.get("type", "concept"),
                 source_note_id=None,
                 subject=node.get("subject"),
@@ -853,6 +859,8 @@ async def fork_post(
             )
             old_to_new[node.get("id")] = new_id
             created_node_ids.append(new_id)
+            if not is_book:
+                created_non_book_count += 1
 
         # 回填层级：parent_id 指向快照内其它节点时恢复 CHILD_OF 关系
         for node in raw_nodes:
@@ -924,7 +932,7 @@ async def fork_post(
 
         return ForkResponse(
             message=f"克隆成功，《{post.title}》已加入你的知识书架",
-            nodes_count=len(created_node_ids),
+            nodes_count=created_non_book_count,
             edges_count=edges_created,
         )
     except ServiceUnavailable as exc:

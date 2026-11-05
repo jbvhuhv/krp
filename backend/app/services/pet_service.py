@@ -412,12 +412,23 @@ async def save_chat_exchange(
 # 能显著增强「被需要」的陪伴感。每日最多一次，避免打扰。
 
 
-def build_care_message(pet: Pet, now: datetime | None = None) -> str:
-    """根据情绪、连续打卡天数与时段生成一句个性化的主动问候。"""
+def build_care_message(
+    pet: Pet, now: datetime | None = None, total_nodes: int | None = None
+) -> str:
+    """根据情绪、连续打卡天数与时段生成一句个性化的主动问候。
+
+    ``total_nodes`` 为 None 表示调用方不掌握知识点情况（如单元测试、旧调用点），
+    此时不做「零知识」判断，保持原有按情绪/时段的文案。
+    """
     now = now or now_utc()
     mood = compute_mood(pet, now)
     name = pet.name or "我"
     streak = pet.streak_days or 0
+
+    # 还没有任何知识点时，不要说「树又长大了」这类与事实矛盾的话，
+    # 而是给出下一步可执行的引导。
+    if total_nodes is not None and total_nodes <= 0:
+        return f"{name}还在等你教第一份知识呢～上传一篇笔记，我就能和知识树一起长大啦！"
 
     if mood == "tired":
         return f"主人～好久没见到你了，{name}有点想你了，快回来看看我嘛～"
@@ -438,11 +449,13 @@ def build_care_message(pet: Pet, now: datetime | None = None) -> str:
     return "晚上好主人～今天有什么收获想跟我分享吗？"
 
 
-def take_daily_care(pet: Pet, now: datetime | None = None) -> str | None:
+def take_daily_care(
+    pet: Pet, now: datetime | None = None, total_nodes: int = 0
+) -> str | None:
     """每日首次访问时返回一句主动问候（并记录当天已问候），否则返回 None。"""
     now = now or now_utc()
     today = _to_local(now).date()
     if pet.last_care_date == today:
         return None
     pet.last_care_date = today
-    return build_care_message(pet, now)
+    return build_care_message(pet, now, total_nodes=total_nodes)

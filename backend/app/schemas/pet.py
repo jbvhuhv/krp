@@ -28,6 +28,8 @@ class PetStatus(BaseModel):
     tree_stage: str
     # 可立即收割的成熟轮次数（>0 表示树上有果实可收；支持一次性导入的溢出进位）
     harvestable_cycles: int = 0
+    # 距离下一轮成熟还需积累的知识点数（已成熟待收割时为 0）
+    nodes_to_mature: int = 0
     # 情感状态机：当前情绪、亲密度（衰减后展示值）与分档、连续互动天数
     mood: str = "content"
     bond: int = 0

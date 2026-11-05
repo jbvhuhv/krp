@@ -110,8 +110,15 @@ async def get_pet_status(
     # 展示口径：存在可收割轮次时，进度显示为满额（100），驱动前端成熟态与果实渲染。
     display_growth = 100.0 if ready_cycles > 0 else progress
 
+    # 距离下一轮成熟还需多少知识点：用于前端在未成熟时给出明确提示，
+    # 避免「树上看着有果实、点下去毫无反应」的困惑。
+    remainder = max(0, int(total_nodes)) % pet_service.KNOWLEDGE_FOR_FULL
+    nodes_to_mature = 0 if ready_cycles > 0 else (
+        0 if remainder == 0 and total_nodes > 0 else pet_service.KNOWLEDGE_FOR_FULL - remainder
+    )
+
     # 主动关怀：每日首次访问时，宠物主动开口问候
-    greeting = pet_service.take_daily_care(pet)
+    greeting = pet_service.take_daily_care(pet, total_nodes=int(total_nodes))
     if greeting is not None:
         await db.commit()
 
@@ -123,6 +130,7 @@ async def get_pet_status(
         tree_growth=display_growth,
         tree_stage=_tree_stage(display_growth),
         harvestable_cycles=ready_cycles,
+        nodes_to_mature=nodes_to_mature,
         name=pet.name,
         species=pet.species,
         color=pet.color,

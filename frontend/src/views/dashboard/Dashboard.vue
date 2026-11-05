@@ -1,5 +1,6 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import { ElMessage } from 'element-plus'
 
 import { petApi } from '@/api'
 import { useUserStore } from '@/stores/user'
@@ -31,6 +32,7 @@ const petData = ref({
   next_medal_threshold: null,
   tree_growth: 0,
   harvestable_cycles: 0,
+  nodes_to_mature: 0,
 
   name: '',
   species: '',
@@ -198,7 +200,17 @@ async function handleHarvest() {
 }
 
 async function handleFruitClick() {
-  if (harvesting.value || petLoading.value || !harvestReady.value) return
+  if (harvesting.value || petLoading.value) return
+  // 未成熟时给出明确反馈：此前是静默 return，用户会以为「点了没反应」
+  if (!harvestReady.value) {
+    const remain = petData.value.nodes_to_mature || 0
+    ElMessage.info(
+      remain > 0
+        ? `知识树还在成长，再积累 ${remain} 个知识点就会结出新果实`
+        : '知识树还在成长，继续积累知识点就能结果啦',
+    )
+    return
+  }
   harvesting.value = true
   const target = petAvatarRef.value?.getBoundingClientRect()
   const els = treeFigureRef.value
@@ -385,6 +397,9 @@ onMounted(async () => {
 
           <div v-if="harvestReady && harvestableCount > 0" class="tree-fruit-hint">
             <span class="hint-icon">🔮</span> 树木已成熟 · 点击果实收取 {{ harvestableCount }} 颗知识果实
+          </div>
+          <div v-else-if="petData.nodes_to_mature > 0" class="tree-fruit-hint is-growing">
+            <span class="hint-icon">🌱</span> 还需 {{ petData.nodes_to_mature }} 个知识点，知识树就会结出果实
           </div>
 
           <div class="tree-progress">

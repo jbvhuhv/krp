@@ -407,7 +407,8 @@ docker run --rm -p 8000:8000 \
 | POST | `/api/v1/graph/edges` | 创建节点间关系 |
 | GET | `/api/v1/graph/nodes/{nodeId}/source` | 查看节点来源笔记 |
 | POST | `/api/v1/graph/nodes/{nodeId}/ai-summary` | 为节点生成 AI 摘要 |
-| GET | `/api/v1/reflection/today` | 获取今日反思问题（无则自动生成） |
+| GET | `/api/v1/reflection/today` | 获取今日已生成的反思问题（只读，不触发生成） |
+| POST | `/api/v1/reflection/today/generate` | 生成今日问题（用户级锁 + 幂等，定时任务同入口） |
 | POST | `/api/v1/reflection/answer` | 提交作答并获取 AI 评估反馈 |
 | GET | `/api/v1/reflection/history` | 查看反思历史记录（分页） |
 | GET | `/api/v1/reflection/mastery` | 查看掌握度趋势 |

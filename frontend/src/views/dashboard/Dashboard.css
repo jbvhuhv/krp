@@ -1439,6 +1439,17 @@
   filter: drop-shadow(0 0 6px rgba(103, 232, 249, 0.8));
 }
 
+/* 未成熟时的成长提示：比成熟态弱一档，避免与「可收取」混淆 */
+.tree-fruit-hint.is-growing {
+  color: rgba(165, 243, 252, 0.78);
+  text-shadow: none;
+}
+
+.tree-fruit-hint.is-growing .hint-icon {
+  filter: none;
+  opacity: 0.85;
+}
+
 
 /* ===== 情感状态：情绪标签 / 亲密度 / 连续打卡 / 主动关怀气泡 ===== */
 .pet-mood-tag {

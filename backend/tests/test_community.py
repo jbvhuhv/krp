@@ -178,8 +178,9 @@ class TestCommunityForkAPI:
         resp = await client.post(f"/api/v1/community/posts/{post_id}/fork")
         assert resp.status_code == 200
         data = resp.json()
-        # 2 个快照节点 + 1 个新建的书籍根节点（克隆结果要挂到一本书下）
-        assert data["nodes_count"] == 3
+        # 口径与书架一致：只统计书根之下的分类/知识点（2 个快照节点），
+        # 自动补建的书籍根节点不计入，避免「克隆数比书架显示多 1」
+        assert data["nodes_count"] == 2
         assert data["edges_count"] == 1
 
     async def test_fork_increments_clones_count(self, client, seed_user, graph_snapshot, mock_graph_service):
