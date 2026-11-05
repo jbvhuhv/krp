@@ -378,3 +378,277 @@ async def test_community_post_rejects_blocked_content(test_db):
         await create_post(payload, user_id="ugc-user", db=test_db)
     assert exc.value.status_code == 400
     assert "违规" in exc.value.detail
+
+
+# ---------------------------------------------------------------------------
+# 出题弱信号 / 模板兜底 / 掌握度溯源
+# ---------------------------------------------------------------------------
+
+
+def _reflection_service(db, graph, ai):
+    return ReflectionService(db=db, ai_service=ai, graph_service=graph)
+
+
+def _ai_stub(question="解释一下这个概念"):
+    class _AI:
+        async def generate_question(self, node_name, node_summary=""):
+            return question
+
+        async def evaluate_answer(self, **kwargs):
+            return {
+                "concept_accuracy": 80,
+                "logic_completeness": 60,
+                "example_reasonableness": 40,
+                "suggestion": "补充例子",
+                "weak_points": ["缺少反例"],
+                "resources": ["教材第 3 章"],
+            }
+
+    return _AI()
+
+
+async def test_generate_questions_prefers_fresh_note_node(
+    test_db, mock_graph_service
+):
+    """刚上传笔记的知识点应排到前面，即使它的掌握度不是最低的。"""
+    from datetime import datetime, timezone
+
+    from app.models.note import Note
+    from app.models.user import User
+
+    test_db.add(User(id="sig-user", phone="13900007771"))
+    test_db.add(
+        Note(
+            id="fresh-note",
+            user_id="sig-user",
+            title="刚上传的笔记",
+            content="内容",
+            upload_time=datetime.now(timezone.utc).replace(tzinfo=None),
+        )
+    )
+    await test_db.commit()
+
+    mock_graph_service.get_nodes_for_review = AsyncMock(
+        return_value=[
+            {"id": "old", "name": "旧知识点", "mastery": 5, "source_note_id": None},
+            {
+                "id": "fresh",
+                "name": "新知识点",
+                "mastery": 55,
+                "source_note_id": "fresh-note",
+            },
+        ]
+    )
+
+    service = _reflection_service(test_db, mock_graph_service, _ai_stub())
+    records = await service.generate_questions("sig-user")
+
+    assert [r.node_name for r in records][0] == "新知识点"
+    assert "最近 3 天上传的笔记" in records[0].reason
+    # 弱信号只排序，绝不改掌握度
+    mock_graph_service.update_mastery.assert_not_called()
+
+
+async def test_generate_questions_without_signals_keeps_mastery_order(
+    test_db, mock_graph_service
+):
+    mock_graph_service.get_nodes_for_review = AsyncMock(
+        return_value=[
+            {"id": "low", "name": "低掌握", "mastery": 5},
+            {"id": "high", "name": "高掌握", "mastery": 55},
+        ]
+    )
+    service = _reflection_service(test_db, mock_graph_service, _ai_stub())
+    records = await service.generate_questions("no-signal-user")
+
+    assert [r.node_name for r in records] == ["低掌握", "高掌握"]
+    assert all(r.generated_by == "ai" for r in records)
+
+
+async def test_template_question_is_stable_per_node():
+    from app.services.reflection_service import template_question
+
+    first = template_question("牛顿第二定律", "F=ma，力与加速度同向")
+    second = template_question("牛顿第二定律", "F=ma，力与加速度同向")
+
+    assert first == second
+    assert "牛顿第二定律" in first
+    assert "F=ma" in first
+
+
+async def test_evaluate_answer_records_mastery_ledger(test_db, mock_graph_service):
+    """评分当下就把改前/改后/权重记账，否则事后无法解释掌握度怎么来的。"""
+    from app.models.reflection import ReflectionRecord
+
+    record = ReflectionRecord(
+        id="ledger-q1", user_id="ledger-user", question="解释牛顿第二定律",
+        node_name="牛顿第二定律", target_node_id="node-x",
+    )
+    test_db.add(record)
+    await test_db.commit()
+
+    mock_graph_service.get_node_detail = AsyncMock(
+        return_value={"id": "node-x", "mastery": 40.0, "last_reviewed": None}
+    )
+
+    service = _reflection_service(test_db, mock_graph_service, _ai_stub())
+    result = await service.evaluate_answer("ledger-user", "ledger-q1", "答案")
+
+    await test_db.refresh(record)
+    # 80*0.4 + 60*0.35 + 40*0.25 = 63
+    assert result["mastery_score"] == pytest.approx(63.0)
+    assert record.mastery_before == pytest.approx(40.0)
+    assert record.mastery_after is not None
+    assert record.mastery_weight is not None
+    assert result["mastery_synced"] is True
+
+
+async def test_evaluate_answer_survives_readonly_graph(test_db, mock_graph_service):
+    """图谱只读（演示模式）时不能丢掉整个评分，但要如实说掌握度没同步。"""
+    from app.models.reflection import ReflectionRecord
+
+    test_db.add(
+        ReflectionRecord(
+            id="ro-q1", user_id="ro-user", question="解释概念",
+            node_name="概念", target_node_id="node-ro",
+        )
+    )
+    await test_db.commit()
+
+    from app.core.exceptions import ForbiddenException
+
+    mock_graph_service.get_node_detail = AsyncMock(
+        side_effect=ForbiddenException("只读图谱")
+    )
+
+    service = _reflection_service(test_db, mock_graph_service, _ai_stub())
+    result = await service.evaluate_answer("ro-user", "ro-q1", "答案")
+
+    assert result["mastery_score"] == pytest.approx(63.0)
+    assert result["mastery_synced"] is False
+
+
+async def test_node_mastery_detail_reports_ledger(test_db, mock_graph_service):
+    from datetime import datetime, timezone
+
+    from app.models.reflection import ReflectionRecord
+
+    test_db.add(
+        ReflectionRecord(
+            id="detail-q1", user_id="detail-user", question="问", answer="答",
+            node_name="牛顿第二定律", target_node_id="node-d",
+            mastery_score=62.0, concept_accuracy=80.0, logic_completeness=60.0,
+            example_reasonableness=40.0, mastery_before=40.0, mastery_after=53.2,
+            mastery_weight=0.78,
+            answered_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        )
+    )
+    await test_db.commit()
+    mock_graph_service.get_node_detail = AsyncMock(
+        return_value={"id": "node-d", "name": "牛顿第二定律", "mastery": 53.2}
+    )
+
+    service = _reflection_service(test_db, mock_graph_service, _ai_stub())
+    data = await service.get_node_mastery_detail("detail-user", "node-d")
+
+    assert data["review_count"] == 1
+    assert data["timeline"][0]["mastery_before"] == 40.0
+    assert data["timeline"][0]["mastery_after"] == 53.2
+    assert data["timeline"][0]["recorded"] is True
+    assert data["weights"]["concept"] == 0.4
+
+
+async def test_node_view_endpoint_records_signal(client, test_db):
+    """节点查看埋点要落库，它是反思出题的第三个弱信号。"""
+    from sqlalchemy import select
+
+    from app.models.reflection import NodeView
+
+    resp = await client.post("/api/v1/graph/nodes/node-view-1/view")
+    assert resp.status_code == 204
+
+    rows = (
+        (
+            await test_db.execute(
+                select(NodeView).where(NodeView.node_id == "node-view-1")
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(rows) == 1
+    assert rows[0].user_id == "test-user-0001"
+
+
+async def test_node_mastery_endpoint_returns_ledger(client):
+    from app.api.deps import get_reflection_service
+    from app.main import app
+
+    service = AsyncMock()
+    service.get_node_mastery_detail = AsyncMock(
+        return_value={
+            "node_id": "node-1",
+            "node_name": "牛顿第二定律",
+            "mastery": 53.2,
+            "last_reviewed": None,
+            "review_count": 1,
+            "timeline": [
+                {
+                    "record_id": "r1",
+                    "time": "2026-11-05T10:00:00+00:00",
+                    "score": 63.0,
+                    "concept_accuracy": 80.0,
+                    "logic_completeness": 60.0,
+                    "example_reasonableness": 40.0,
+                    "mastery_before": 40.0,
+                    "mastery_after": 53.2,
+                    "new_weight": 0.78,
+                    "recorded": True,
+                }
+            ],
+            "weights": {
+                "concept": 0.4,
+                "logic": 0.35,
+                "example": 0.25,
+                "base_new_weight": 0.6,
+                "halflife_days": 14.0,
+            },
+        }
+    )
+    app.dependency_overrides[get_reflection_service] = lambda: service
+
+    resp = await client.get("/api/v1/reflection/nodes/node-1/mastery")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["review_count"] == 1
+    assert body["timeline"][0]["mastery_before"] == 40.0
+    assert body["timeline"][0]["recorded"] is True
+
+
+async def test_node_mastery_endpoint_404_when_unknown(client):
+    from app.api.deps import get_reflection_service
+    from app.main import app
+
+    service = AsyncMock()
+    service.get_node_mastery_detail = AsyncMock(
+        return_value={
+            "node_id": "nope",
+            "node_name": "",
+            "mastery": 0.0,
+            "last_reviewed": None,
+            "review_count": 0,
+            "timeline": [],
+            "weights": {
+                "concept": 0.4,
+                "logic": 0.35,
+                "example": 0.25,
+                "base_new_weight": 0.6,
+                "halflife_days": 14.0,
+            },
+        }
+    )
+    app.dependency_overrides[get_reflection_service] = lambda: service
+
+    resp = await client.get("/api/v1/reflection/nodes/nope/mastery")
+    assert resp.status_code == 404

@@ -140,7 +140,12 @@ async function handleSubmit(questionId) {
       is_voice: !!voiceUsed[questionId],
     })
     feedbacks[questionId] = result
-    ElMessage.success('评估完成')
+    if (result.mastery_synced === false) {
+      // 图谱只读 / 不可用时，评分已保存、掌握度没同步，必须说出来而不是假装都成了
+      ElMessage.warning('评分已保存，但掌握度未能写回知识图谱（图谱当前只读）')
+    } else {
+      ElMessage.success('评估完成')
+    }
     await nextTick()
     initRadar(questionId, result)
   } catch {
@@ -411,6 +416,14 @@ onBeforeUnmount(() => {
               </el-tag>
             </div>
             <p class="question-text">{{ q.question }}</p>
+
+            <p v-if="q.reason" class="question-reason">
+              <span class="reason-label">为什么问这道</span>
+              <span class="reason-text">{{ q.reason }}</span>
+            </p>
+            <p v-if="q.generated_by === 'template'" class="question-fallback">
+              模型暂时不可用，本题由模板生成；作答后的评分与掌握度更新不受影响。
+            </p>
 
             <el-input
               v-model="answers[q.id]"

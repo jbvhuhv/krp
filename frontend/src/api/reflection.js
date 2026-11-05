@@ -6,6 +6,7 @@ export const reflectionApi = {
   submitAnswer: (data) => request.post('/reflection/answer', data),
   getHistory: (params) => request.get('/reflection/history', { params }),
   getMastery: () => request.get('/reflection/mastery'),
+  getNodeMastery: (nodeId) => request.get(`/reflection/nodes/${nodeId}/mastery`),
   getSchedule: () => request.get('/reflection/schedule'),
   updateSchedule: (data) => request.put('/reflection/schedule', data),
 }

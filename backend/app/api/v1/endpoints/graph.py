@@ -1,12 +1,16 @@
+import random
+from datetime import datetime, timedelta, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from neo4j.exceptions import ServiceUnavailable
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_ai_service, get_current_user_id, get_db, get_graph_service
 from app.core.logger import get_logger
 from app.core.prompt_manager import prompt_manager
 from app.models.note import Note
+from app.models.reflection import NodeView
 from app.schemas.graph import (
     BookOut,
     BooksResponse,
@@ -319,6 +323,34 @@ async def create_edge(
         relation=payload.relation,
         weight=payload.weight,
     )
+
+
+@router.post("/nodes/{node_id}/view", status_code=status.HTTP_204_NO_CONTENT)
+async def record_node_view(
+    node_id: str,
+    user_id: str = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """记录「用户打开过这个知识点」。
+
+    埋点唯一用途是给反思出题排序提供弱信号（不影响掌握度分数），
+    所以这里能失败就失败：埋点写不进去绝不能挡住用户看节点。
+    """
+    try:
+        db.add(NodeView(user_id=user_id, node_id=node_id))
+        # 1/20 概率顺手清理 30 天前的旧记录，避免埋点表无限膨胀
+        if random.random() < 0.05:
+            cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=30)
+            await db.execute(
+                delete(NodeView).where(
+                    NodeView.user_id == user_id, NodeView.viewed_at < cutoff
+                )
+            )
+        await db.commit()
+    except Exception:  # noqa: BLE001 - 埋点失败不影响主流程
+        await db.rollback()
+        logger.warning("节点查看埋点写入失败: node=%s", node_id, exc_info=True)
+    return None
 
 
 @router.get("/nodes/{node_id}/source", response_model=NodeSourceOut)

@@ -18,5 +18,6 @@ export const graphApi = {
   deleteNode: (nodeId) => request.delete(`/graph/nodes/${nodeId}`),
   createEdge: (data) => request.post('/graph/edges', data),
   getNodeSource: (nodeId) => request.get(`/graph/nodes/${nodeId}/source`),
+  recordView: (nodeId) => request.post(`/graph/nodes/${nodeId}/view`),
   generateSummary: (nodeId) => request.post(`/graph/nodes/${nodeId}/ai-summary`),
 }

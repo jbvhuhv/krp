@@ -7,6 +7,7 @@ from app.schemas.reflection import (
     FeedbackOut,
     MasteryTrend,
     MasteryTrendItem,
+    NodeMasteryDetail,
     ReflectionHistory,
     ReflectionHistoryItem,
     ReflectionQuestion,
@@ -19,6 +20,19 @@ from app.services.reflection_service import ReflectionService, _generate_lock
 router = APIRouter()
 
 
+def _to_question_out(q) -> ReflectionQuestion:
+    return ReflectionQuestion(
+        id=q.id,
+        question=q.question,
+        target_node_id=q.target_node_id,
+        node_name=q.node_name,
+        answered=q.answer is not None,
+        reason=q.reason,
+        generated_by=q.generated_by,
+    )
+
+
+
 @router.get("/today", response_model=list[ReflectionQuestion])
 async def get_today_questions(
     user_id: str = Depends(get_current_user_id),
@@ -26,13 +40,7 @@ async def get_today_questions(
 ):
     questions = await reflection_service.get_today_questions(user_id)
     return [
-        ReflectionQuestion(
-            id=q.id,
-            question=q.question,
-            target_node_id=q.target_node_id,
-            node_name=q.node_name,
-            answered=q.answer is not None,
-        )
+        _to_question_out(q)
         for q in questions
     ]
 
@@ -49,13 +57,7 @@ async def generate_today_questions(
         else:
             questions = await reflection_service.generate_questions(user_id)
     return [
-        ReflectionQuestion(
-            id=q.id,
-            question=q.question,
-            target_node_id=q.target_node_id,
-            node_name=q.node_name,
-            answered=q.answer is not None,
-        )
+        _to_question_out(q)
         for q in questions
     ]
 
@@ -120,6 +122,22 @@ async def get_mastery(
         nodes=[MasteryTrendItem(**node) for node in data["nodes"]],
         timeline=data["timeline"],
     )
+
+
+@router.get("/nodes/{node_id}/mastery", response_model=NodeMasteryDetail)
+async def get_node_mastery_detail(
+    node_id: str,
+    user_id: str = Depends(get_current_user_id),
+    reflection_service: ReflectionService = Depends(get_reflection_service),
+):
+    """某个知识点的掌握度溯源：当前值 + 每次反思的账（改前/改后/权重）。"""
+    data = await reflection_service.get_node_mastery_detail(user_id, node_id)
+    if not data["timeline"] and not data["node_name"]:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="知识点不存在，或还没有反思记录",
+        )
+    return NodeMasteryDetail(**data)
 
 
 @router.get("/schedule", response_model=ScheduleOut)

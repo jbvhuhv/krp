@@ -138,6 +138,42 @@
   letter-spacing: 0.2px;
 }
 
+/* 出题理由：把「为什么今天问这道」摊开，别让用户觉得 AI 在随机出题 */
+.question-reason {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: -6px 0 14px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.reason-label {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(56, 189, 248, 0.12);
+  color: #7dd3fc;
+  font-size: 11px;
+  letter-spacing: 0.3px;
+}
+
+.reason-text {
+  color: #94a3b8;
+}
+
+/* 模板题兜底提示：模型挂了也要让用户知道题目从哪来 */
+.question-fallback {
+  margin: -6px 0 14px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border-left: 2px solid rgba(251, 191, 36, 0.6);
+  background: rgba(251, 191, 36, 0.08);
+  font-size: 12px;
+  line-height: 1.6;
+  color: #fcd34d;
+}
+
 .answer-input {
   margin-bottom: 12px;
 }

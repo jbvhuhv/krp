@@ -70,9 +70,15 @@ _AVATAR_COLUMNS = {
 }
 
 # 反思记录的评分明细：薄弱点与推荐资源（JSON 数组字符串）
+# reason / generated_by：出题依据与是否模板兜底；mastery_*：评分当下的掌握度记账
 _REFLECTION_COLUMNS = {
     "weak_points": "TEXT",
     "resources": "TEXT",
+    "reason": "TEXT",
+    "generated_by": "VARCHAR(16)",
+    "mastery_before": "FLOAT",
+    "mastery_after": "FLOAT",
+    "mastery_weight": "FLOAT",
 }
 
 _TABLE_COLUMNS = {

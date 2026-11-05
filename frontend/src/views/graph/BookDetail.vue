@@ -3,7 +3,7 @@ import { ref, reactive, computed, onMounted, onBeforeUnmount, watch, nextTick } 
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import echarts from '@/utils/echarts'
-import { graphApi, brainstormApi, notifyError } from '@/api'
+import { graphApi, brainstormApi, reflectionApi, notifyError } from '@/api'
 import NodeContextMenu from './components/NodeContextMenu.vue'
 import AIAssistPanel from './components/AIAssistPanel.vue'
 
@@ -28,6 +28,10 @@ const detailForm = reactive({
 })
 const sourceNote = ref(null)
 const sourceLoading = ref(false)
+
+// 掌握度溯源：为什么这个知识点是 62%——每次反思的账都摊开给用户看
+const masteryDetail = ref(null)
+const masteryLoading = ref(false)
 
 const addDialogVisible = ref(false)
 const addForm = reactive({
@@ -185,8 +189,15 @@ async function selectNode(data, openDrawer = true) {
   detailForm.name = data.name || ''
   detailForm.summary = data.summary || ''
   detailForm.mastery = data.mastery || 0
-  if (data.node_type === 'knowledge') loadSourceNote(data.id)
-  else sourceNote.value = null
+  if (data.node_type === 'knowledge') {
+    loadSourceNote(data.id)
+    loadMasteryDetail(data.id)
+    // 查看行为只用于给反思出题排序（弱信号），失败静默忽略
+    if (openDrawer) graphApi.recordView(data.id).catch(() => {})
+  } else {
+    sourceNote.value = null
+    masteryDetail.value = null
+  }
   expandToNode(data.id)
 
   if (openDrawer) detailDrawerVisible.value = true
@@ -219,6 +230,27 @@ async function loadSourceNote(nodeId) {
   } finally {
     sourceLoading.value = false
   }
+}
+
+async function loadMasteryDetail(nodeId) {
+  masteryLoading.value = true
+  masteryDetail.value = null
+  try {
+    masteryDetail.value = await reflectionApi.getNodeMastery(nodeId)
+  } catch {
+    // 404 = 还没反思过；其它错误同样降级为「暂无记录」，不打断阅读
+    masteryDetail.value = null
+  } finally {
+    masteryLoading.value = false
+  }
+}
+
+function formatLedgerTime(value) {
+  if (!value) return '—'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '—'
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
 function selectNodeById(id) {
@@ -1156,6 +1188,53 @@ watch(treeData, () => {
                   </div>
                 </div>
               </div>
+            </div>
+          </section>
+
+          <section
+            v-if="currentNode.node_type === 'knowledge'"
+            class="drawer-card ledger-card"
+          >
+            <div class="drawer-card-head">
+              <span class="drawer-card-title">掌握度溯源</span>
+              <span class="ledger-head-note" v-if="masteryDetail">
+                {{ masteryDetail.review_count }} 次反思
+              </span>
+            </div>
+            <div class="drawer-card-body">
+              <p class="ledger-formula">
+                每次作答得分按权重融合进旧掌握度：得分 = 概念准确 40% + 逻辑完整 35% + 例子合理 25%；
+                距上次复习越久、当前掌握度越低，本次观测的权重越大（半衰期 14 天）。
+              </p>
+
+              <div v-if="masteryLoading" class="ledger-empty">正在读取反思记录…</div>
+              <div v-else-if="!masteryDetail || !masteryDetail.timeline.length" class="ledger-empty">
+                还没有反思记录。去「每日反思」答一道与它相关的题，这里就会出现第一条账。
+              </div>
+              <ol v-else class="ledger-list">
+                <li
+                  v-for="entry in masteryDetail.timeline"
+                  :key="entry.record_id"
+                  class="ledger-item"
+                >
+                  <span class="ledger-time">{{ formatLedgerTime(entry.time) }}</span>
+                  <span v-if="entry.recorded" class="ledger-delta">
+                    <span class="ledger-from">{{ Math.round(entry.mastery_before) }}</span>
+                    <span class="ledger-arrow">→</span>
+                    <span class="ledger-to">{{ Math.round(entry.mastery_after) }}</span>
+                  </span>
+                  <span v-else class="ledger-delta is-historical">未留存前后值</span>
+                  <span class="ledger-score">得分 {{ Math.round(entry.score || 0) }}</span>
+                  <span v-if="entry.new_weight != null" class="ledger-weight">
+                    权重 {{ Math.round(entry.new_weight * 100) }}%
+                  </span>
+                </li>
+              </ol>
+
+              <p class="ledger-foot">
+                当前掌握度 {{ Math.round(currentNode.mastery || 0) }}%；
+                这里只解释「反思带来的变化」，抽取时的初始值不在账上。
+              </p>
             </div>
           </section>
 

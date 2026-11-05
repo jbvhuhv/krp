@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.logger import get_logger
 from app.models.reflection import ReflectionRecord, ReflectionSchedule
+from app.services import review_signals
 from app.services.ai_service import AIService
 from app.services.graph_service import GraphService
 from app.services.providers.base import AI_BUSY_MESSAGE
@@ -136,6 +137,43 @@ def _days_since(last_reviewed) -> float | None:
         return None
 
 
+# 出题失败时的兜底模板：宁可给一道朴素但可答的题，也不要当天 0 道题。
+# 现场演示时网络一抖 / 模型额度用尽，用户看到「今天没有需要反思的内容」比看到报错更糟。
+_TEMPLATE_QUESTIONS = (
+    "请用自己的话解释「{name}」，并说明它最容易和哪个概念混淆。",
+    "如果要在考试或项目里用上「{name}」，你会怎么向别人讲清楚它？",
+    "「{name}」解决的是什么问题？请举一个你自己做过的例子。",
+)
+
+
+def template_question(node_name: str, node_summary: str = "") -> str:
+    """按节点名稳定地挑一条模板题：同一节点每次拿到的题一致，便于复现。"""
+    name = (node_name or "").strip() or "这个知识点"
+    index = sum(ord(ch) for ch in name) % len(_TEMPLATE_QUESTIONS)
+    question = _TEMPLATE_QUESTIONS[index].format(name=name)
+    summary = (node_summary or "").strip()
+    if len(summary) >= 10:
+        question += f"（笔记里的说法：{summary[:60]}…）"
+    return question
+
+
+def build_question_reason(node: dict, signals: dict | None) -> str:
+    """把「为什么今天问这道题」讲清楚：先讲硬原因（掌握度/久未复习），再补行为信号。"""
+    mastery = _to_score(node.get("mastery"), 0.0)
+    parts: list[str] = []
+    if mastery < MASTERY_THRESHOLD:
+        parts.append(f"掌握度 {mastery:.0f} 分，低于 {MASTERY_THRESHOLD:.0f}")
+    elif node.get("last_reviewed") is None:
+        parts.append("还没有复习记录")
+    else:
+        days = _days_since(node.get("last_reviewed"))
+        parts.append("超过 7 天没有复习" if days is None else f"距上次复习 {days:.0f} 天")
+
+    if signals:
+        parts.extend(signals.get("reasons") or [])
+    return "；".join(parts)
+
+
 def compute_mastery_weights(
     old_mastery: float, days_since_review: float | None
 ) -> tuple[float, float]:
@@ -196,7 +234,20 @@ class ReflectionService:
             days_threshold=DAYS_THRESHOLD,
             limit=max_questions * 3,
         )
-        nodes = [n for n in nodes if n.get("id") not in asked_node_ids][:max_questions]
+        nodes = [n for n in nodes if n.get("id") not in asked_node_ids]
+        if not nodes:
+            return []
+
+        # 弱信号只重排、不改分：先看今天"值得问"的（刚学的、正被讨论的、刚看过的），
+        # 同分时再回落到「掌握度低 + 久未复习」。
+        signals = await review_signals.collect(self.db, user_id, nodes)
+        nodes.sort(
+            key=lambda n: (
+                -(signals.get(n.get("id"), {}).get("score") or 0.0),
+                _to_score(n.get("mastery"), 0.0),
+            )
+        )
+        nodes = nodes[:max_questions]
 
         records = []
         for node in nodes:
@@ -204,20 +255,17 @@ class ReflectionService:
             node_name = node.get("name", "未知知识点")
             node_summary = node.get("summary", "")
 
-            try:
-                question_text = await self.ai_service.generate_question(
-                    node_name=node_name,
-                    node_summary=node_summary,
-                )
-            except Exception:
-                logger.exception("生成问题失败: node_id=%s", node_id)
-                continue
+            question_text, generated_by = await self._make_question(
+                node_name, node_summary
+            )
 
             record = ReflectionRecord(
                 user_id=user_id,
                 question=question_text,
                 target_node_id=node_id,
                 node_name=node_name,
+                reason=build_question_reason(node, signals.get(node_id)),
+                generated_by=generated_by,
             )
             self.db.add(record)
             records.append(record)
@@ -227,6 +275,21 @@ class ReflectionService:
             await self.db.refresh(record)
 
         return records
+
+    async def _make_question(self, node_name: str, node_summary: str) -> tuple[str, str]:
+        """返回 (题干, 生成方式)。模型失败或返回空串时用模板题兜底，绝不让当天空手而归。"""
+        try:
+            question = await self.ai_service.generate_question(
+                node_name=node_name,
+                node_summary=node_summary,
+            )
+            if question and question.strip():
+                return question.strip(), "ai"
+            logger.warning("模型返回空题目，改用模板题: node=%s", node_name)
+        except Exception:  # noqa: BLE001 - 出题失败不应阻断整轮反思
+            logger.warning("生成问题失败，改用模板题: node=%s", node_name, exc_info=True)
+        return template_question(node_name, node_summary), "template"
+
 
     async def get_today_questions(self, user_id: str) -> list[ReflectionRecord]:
         today_start, tomorrow_start = _local_day_bounds()
@@ -318,29 +381,53 @@ class ReflectionService:
         record.example_reasonableness = example
         record.answered_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
-        old_mastery = 0.0
+        # 掌握度记账：把「改前 / 改后 / 本次权重」落到这条反思记录上。
+        # 复盘时不需要回放公式（图谱初值和历史都在变），直接看当时的账最可信。
+        mastery_before: float | None = None
+        mastery_after: float | None = None
+        mastery_weight: float | None = None
+        mastery_synced = True
         if record.target_node_id:
             # 单进程内串行化「读旧值→算新值→写回」，避免同节点并发评分互相覆盖。
             # 多实例部署仍需在 Neo4j 侧做原子写（本项目的部署形态是单容器）。
             async with _mastery_lock(user_id, record.target_node_id):
-                node = await self.graph_service.get_node_detail(
-                    user_id=user_id, node_id=record.target_node_id
-                )
-                if node:
-                    old_mastery = float(node.get("mastery", 0.0))
+                try:
+                    node = await self.graph_service.get_node_detail(
+                        user_id=user_id, node_id=record.target_node_id
+                    )
+                    old_mastery = float(node.get("mastery") or 0.0) if node else 0.0
 
-                days_since_review = (
-                    _days_since(node.get("last_reviewed")) if node else None
-                )
-                old_weight, new_weight = compute_mastery_weights(
-                    old_mastery, days_since_review
-                )
-                new_mastery = old_mastery * old_weight + weighted_score * new_weight
-                await self.graph_service.update_mastery(
-                    user_id=user_id,
-                    node_id=record.target_node_id,
-                    mastery=new_mastery,
-                )
+                    days_since_review = (
+                        _days_since(node.get("last_reviewed")) if node else None
+                    )
+                    old_weight, new_weight = compute_mastery_weights(
+                        old_mastery, days_since_review
+                    )
+                    new_mastery = (
+                        old_mastery * old_weight + weighted_score * new_weight
+                    )
+                    await self.graph_service.update_mastery(
+                        user_id=user_id,
+                        node_id=record.target_node_id,
+                        mastery=new_mastery,
+                    )
+                    mastery_before = round(old_mastery, 2)
+                    mastery_after = round(new_mastery, 2)
+                    mastery_weight = round(new_weight, 4)
+                except Exception:  # noqa: BLE001
+                    # 图谱只读（演示模式）或不可用时，评分本身仍然有效：
+                    # 丢掉整次评分比「分数已记录、掌握度未同步」更伤用户。
+                    mastery_synced = False
+                    logger.warning(
+                        "掌握度回写失败，本次评分仍然保留: user=%s node=%s",
+                        user_id,
+                        record.target_node_id,
+                        exc_info=True,
+                    )
+
+        record.mastery_before = mastery_before
+        record.mastery_after = mastery_after
+        record.mastery_weight = mastery_weight
 
         await self.db.commit()
         await self.db.refresh(record)
@@ -353,6 +440,7 @@ class ReflectionService:
             "weak_points": evaluation.get("weak_points", []),
             "suggestion": evaluation.get("suggestion", ""),
             "resources": evaluation.get("resources", []),
+            "mastery_synced": mastery_synced,
         }
 
     async def get_history(
@@ -432,6 +520,63 @@ class ReflectionService:
             entry.pop("_last_time", None)
 
         return {"nodes": list(node_map.values()), "timeline": timeline}
+
+    async def get_node_mastery_detail(self, user_id: str, node_id: str) -> dict:
+        """单个知识点的掌握度溯源：当前值 + 每次反思的账（改前/改后/权重/三维护分）。
+
+        这是回答「这个 62 分是怎么来的」的唯一入口。历史记录里 mastery_before/after
+        为空的是记账上线前的数据，如实标为「未记账」，不做回放猜测。
+        """
+        node = None
+        try:
+            node = await self.graph_service.get_node_detail(
+                user_id=user_id, node_id=node_id
+            )
+        except Exception:  # noqa: BLE001 - 图谱不可用时仍应能看历史记录
+            logger.warning("读取节点详情失败: node=%s", node_id, exc_info=True)
+
+        result = await self.db.execute(
+            select(ReflectionRecord)
+            .where(
+                ReflectionRecord.user_id == user_id,
+                ReflectionRecord.target_node_id == node_id,
+                ReflectionRecord.answered_at.is_not(None),
+            )
+            .order_by(ReflectionRecord.answered_at.asc())
+        )
+        records = list(result.scalars().all())
+
+        timeline = [
+            {
+                "record_id": r.id,
+                "time": r.answered_at.isoformat() if r.answered_at else None,
+                "score": r.mastery_score,
+                "concept_accuracy": r.concept_accuracy,
+                "logic_completeness": r.logic_completeness,
+                "example_reasonableness": r.example_reasonableness,
+                "mastery_before": r.mastery_before,
+                "mastery_after": r.mastery_after,
+                "new_weight": r.mastery_weight,
+                "recorded": r.mastery_after is not None,
+            }
+            for r in records
+        ]
+
+        return {
+            "node_id": node_id,
+            "node_name": (node or {}).get("name") or (records[-1].node_name if records else ""),
+            "mastery": _to_score((node or {}).get("mastery"), 0.0),
+            "last_reviewed": (node or {}).get("last_reviewed"),
+            "review_count": len(records),
+            "timeline": timeline,
+            "weights": {
+                "concept": WEIGHT_CONCEPT,
+                "logic": WEIGHT_LOGIC,
+                "example": WEIGHT_EXAMPLE,
+                "base_new_weight": MASTERY_NEW_WEIGHT,
+                "halflife_days": MASTERY_DECAY_HALFLIFE_DAYS,
+            },
+        }
 
     async def get_schedule(self, user_id: str) -> ReflectionSchedule:
         result = await self.db.execute(

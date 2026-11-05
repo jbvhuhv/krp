@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import os
 from collections import Counter
+from datetime import datetime, timezone
 
 from app.core.exceptions import ForbiddenException
 from app.core.logger import get_logger
@@ -33,6 +34,40 @@ logger = get_logger(__name__)
 
 BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 DEMO_GRAPH = os.path.join(BACKEND_DIR, "demo", "neo4j-demo.jsonl")
+
+def _days_since_any(value) -> float | None:
+    """把演示图谱里的 last_reviewed 折算成天数。
+
+    同一份 jsonl 里这个字段可能是 ISO 字符串、毫秒时间戳或 neo4j DateTime，
+    统一在这里兜住，避免筛选逻辑散落各处的类型判断。
+    """
+    if value is None or value == "":
+        return None
+
+    dt: datetime | None = None
+    if isinstance(value, (int, float)):
+        seconds = value / 1000.0 if value > 1e11 else float(value)
+        dt = datetime.fromtimestamp(seconds, tz=timezone.utc)
+    elif isinstance(value, str):
+        try:
+            dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    else:
+        to_native = getattr(value, "to_native", None)
+        if not callable(to_native):
+            return None
+        try:
+            dt = to_native()
+        except Exception:  # noqa: BLE001 - 时间格式异常不应影响复习筛选
+            return None
+
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return max(0.0, (datetime.now(timezone.utc) - dt).total_seconds() / 86400.0)
+
 
 _READ_ONLY_HINT = (
     "当前为演示模式（内置只读图谱），不支持修改知识图谱。"
@@ -168,6 +203,33 @@ class LocalGraphService:
         if not node or node.get("user_id") != user_id:
             return None
         return dict(node)
+
+    async def get_nodes_for_review(
+        self,
+        user_id: str,
+        mastery_threshold: float = 60.0,
+        days_threshold: int = 7,
+        limit: int = 5,
+    ) -> list[dict]:
+        """只读版待复习节点：与 Neo4j 侧同一套筛选口径（掌握度低 / 没复习过 / 久未复习）。
+
+        没有这个实现，纯演示环境（无 Neo4j）打开「每日反思」会直接 403，
+        而反思是作品的核心闭环——演示环境最不该缺的就是它。
+        """
+        candidates: list[tuple[float, float, dict]] = []
+        for node in self._data.visible_nodes(user_id):
+            if node.get("node_type") != NODE_TYPE_KNOWLEDGE:
+                continue
+            mastery = node.get("mastery")
+            mastery = float(mastery) if isinstance(mastery, (int, float)) else 0.0
+            days = _days_since_any(node.get("last_reviewed"))
+            if mastery < mastery_threshold or days is None or days >= days_threshold:
+                # 排序键：掌握度优先，其次「越久未复习越靠前」（无记录视为最久）
+                candidates.append(
+                    (mastery, -(days if days is not None else 10_000.0), dict(node))
+                )
+        candidates.sort(key=lambda item: (item[0], item[1]))
+        return [node for _, _, node in candidates[:limit]]
 
     async def get_user_graph(
         self,

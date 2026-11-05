@@ -61,9 +61,10 @@ class TestReflectionServiceGenerateQuestions:
 
         assert len(records) == 0
 
-    async def test_generate_questions_ai_failure_skips_node(
+    async def test_generate_questions_ai_failure_uses_template(
         self, reflection_service, mock_graph_service, mock_ai_service
     ):
+        """模型不可用时不能让当天 0 道题：改用模板题，并如实标注 generated_by。"""
         mock_graph_service.get_nodes_for_review = AsyncMock(return_value=[
             {"id": "node-1", "name": "知识点A", "summary": ""},
         ])
@@ -71,7 +72,11 @@ class TestReflectionServiceGenerateQuestions:
 
         records = await reflection_service.generate_questions("user-1")
 
-        assert len(records) == 0
+        assert len(records) == 1
+        assert "知识点A" in records[0].question
+        assert records[0].generated_by == "template"
+        # 出题理由要能说清「为什么是它」
+        assert records[0].reason
 
 
 class TestReflectionServiceGetTodayQuestions:
