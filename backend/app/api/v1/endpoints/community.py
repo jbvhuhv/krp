@@ -405,7 +405,10 @@ async def get_post(
 ):
     result = await db.execute(select(CommunityPost).where(CommunityPost.id == post_id))
     post = result.scalar_one_or_none()
-    if post is None or not post.is_public:
+    # 撤回（is_public=false）的帖子对其他人一律 404，不泄露存在性；
+    # 但作者本人必须能读到——否则「我的发布」里点进去白屏，也没法再改回公开。
+    is_owner = post is not None and current_user_id == post.user_id
+    if post is None or (not post.is_public and not is_owner):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="帖子不存在")
 
     # 浏览量口径：作者查看自己的帖子不计；登录用户同一帖子 24 小时内只计一次；
@@ -537,11 +540,14 @@ async def list_comments(
     post_id: str,
     page: int = Query(1, ge=1),
     size: int = Query(200, ge=1, le=500),
+    current_user_id: str | None = Depends(get_optional_user_id),
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(select(CommunityPost).where(CommunityPost.id == post_id))
     post = result.scalar_one_or_none()
-    if post is None or not post.is_public:
+    # 与详情接口同一口径：撤回帖只有作者本人能读到评论。
+    is_owner = post is not None and current_user_id == post.user_id
+    if post is None or (not post.is_public and not is_owner):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="帖子不存在")
 
     rows = await db.execute(

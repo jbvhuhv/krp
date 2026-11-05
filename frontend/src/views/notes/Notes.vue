@@ -230,7 +230,9 @@ function startPolling(noteId) {
         ElMessage.warning(`《${data.title}》抽取失败：${data.error_message || '内容无法识别，可重试或换个格式'}`)
         stopPolling(noteId)
       } else if (data.status === 'empty') {
-        ElMessage.info(`《${data.title}》内容为空，未生成知识点`)
+        ElMessage.info(
+          `《${data.title}》未生成知识点：${data.error_message || '内容无法识别，可重试或换个格式'}`,
+        )
         stopPolling(noteId)
       }
     } catch {
@@ -1029,28 +1031,34 @@ onBeforeUnmount(() => {
                   后台处理中
                 </el-tag>
               </el-tooltip>
-              <el-tag
+              <el-tooltip
                 v-else
-                class="status-tag status-tag-plain"
-                effect="plain"
-                size="small"
-                disable-transitions
+                :disabled="displayStatus(row) !== 'empty' || !row.error_message"
+                :content="row.error_message || ''"
+                placement="top"
               >
-                <i
-                  class="status-dot"
-                  :class="{ spinning: row.status === 'processing' }"
-                  :style="{ background: getStatusMeta(displayStatus(row)).color }"
-                ></i>
-                {{ getStatusMeta(displayStatus(row)).label }}
-                <el-icon
-                  v-if="canRetry(row)"
-                  class="retry-mini"
-                  :class="{ 'is-busy': reExtractingId === row.id }"
-                  @click="handleReExtract(row)"
+                <el-tag
+                  class="status-tag status-tag-plain"
+                  effect="plain"
+                  size="small"
+                  disable-transitions
                 >
-                  <Refresh />
-                </el-icon>
-              </el-tag>
+                  <i
+                    class="status-dot"
+                    :class="{ spinning: row.status === 'processing' }"
+                    :style="{ background: getStatusMeta(displayStatus(row)).color }"
+                  ></i>
+                  {{ getStatusMeta(displayStatus(row)).label }}
+                  <el-icon
+                    v-if="canRetry(row)"
+                    class="retry-mini"
+                    :class="{ 'is-busy': reExtractingId === row.id }"
+                    @click="handleReExtract(row)"
+                  >
+                    <Refresh />
+                  </el-icon>
+                </el-tag>
+              </el-tooltip>
               <span v-if="displayStatus(row) === 'success'" class="status-count-pill">
                 {{ row.nodes_count }} 知识点 · {{ row.edges_count }} 关系
               </span>

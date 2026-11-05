@@ -15,6 +15,7 @@ const loading = ref(false)
 const post = ref(null)
 const liking = ref(false)
 const forking = ref(false)
+const republishing = ref(false)
 
 const comments = ref([])
 const commentsLoading = ref(false)
@@ -331,6 +332,20 @@ function onChartDblClick(params) {
 }
 
 
+async function handleRepublish() {
+  if (republishing.value) return
+  republishing.value = true
+  try {
+    const updated = await communityApi.setPostVisibility(post.value.id, true)
+    post.value.is_public = updated?.is_public ?? true
+    ElMessage.success('已重新公开到广场')
+  } catch {
+    // 错误已在拦截器中提示
+  } finally {
+    republishing.value = false
+  }
+}
+
 async function handleLike() {
   if (!userStore.isLoggedIn) {
     userStore.openLoginModal()
@@ -537,6 +552,19 @@ onBeforeUnmount(() => {
     </div>
 
     <template v-if="post">
+      <div v-if="!post.is_public" class="withdrawn-banner">
+        <span class="withdrawn-icon">🙈</span>
+        <span class="withdrawn-text">这篇发布已从广场撤回，只有你自己能看到。</span>
+        <el-button
+          size="small"
+          type="primary"
+          plain
+          :loading="republishing"
+          @click="handleRepublish"
+        >
+          重新公开
+        </el-button>
+      </div>
       <div class="detail-header">
         <h1 class="detail-title">{{ post.title }}</h1>
         <p class="detail-desc">{{ post.description || '暂无简介' }}</p>

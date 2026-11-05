@@ -328,3 +328,74 @@ def test_hot_score_decays_with_age():
     fresh = make("fresh", likes=10, views=0, age_hours=1)
     stale_popular = make("stale", likes=100, views=0, age_hours=720)
     assert _hot_score(fresh, now) > _hot_score(stale_popular, now)
+
+
+class TestWithdrawnPostVisibility:
+    """撤回（is_public=false）后：其他人看不到，作者本人要能打开并改回公开。
+
+    之前的实现是「不是公开就 404」，作者在「我的发布」点进详情会白屏，
+    也没法从详情页恢复，属于自伤式的隐私保护。
+    """
+
+    async def _publish_then_withdraw(self, client, graph_snapshot):
+        post_id = (
+            await client.post(
+                "/api/v1/community/posts",
+                json={
+                    "title": "撤回测试",
+                    "description": "",
+                    "graph_snapshot": graph_snapshot,
+                    "tags": [],
+                },
+            )
+        ).json()["id"]
+        resp = await client.post(
+            f"/api/v1/community/posts/{post_id}/visibility", json={"is_public": False}
+        )
+        assert resp.status_code == 200
+        return post_id
+
+    async def test_author_can_read_own_withdrawn_post(self, client, seed_user, graph_snapshot):
+        post_id = await self._publish_then_withdraw(client, graph_snapshot)
+
+        resp = await client.get(f"/api/v1/community/posts/{post_id}")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["is_public"] is False
+        # 撤回帖不该给自己刷浏览
+        assert data["views_count"] == 0
+
+    async def test_author_can_read_own_withdrawn_comments(self, client, seed_user, graph_snapshot):
+        post_id = await self._publish_then_withdraw(client, graph_snapshot)
+
+        resp = await client.get(f"/api/v1/community/posts/{post_id}/comments")
+
+        assert resp.status_code == 200
+
+    async def test_other_user_still_gets_404(self, client, seed_user, graph_snapshot):
+        from app.api.deps import get_optional_user_id
+        from app.main import app
+
+        post_id = await self._publish_then_withdraw(client, graph_snapshot)
+        original = app.dependency_overrides[get_optional_user_id]
+        app.dependency_overrides[get_optional_user_id] = lambda: "someone-else"
+        try:
+            resp = await client.get(f"/api/v1/community/posts/{post_id}")
+            assert resp.status_code == 404
+            comments = await client.get(f"/api/v1/community/posts/{post_id}/comments")
+            assert comments.status_code == 404
+        finally:
+            app.dependency_overrides[get_optional_user_id] = original
+
+    async def test_author_can_republish_after_reading(self, client, seed_user, graph_snapshot):
+        post_id = await self._publish_then_withdraw(client, graph_snapshot)
+
+        resp = await client.post(
+            f"/api/v1/community/posts/{post_id}/visibility", json={"is_public": True}
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["is_public"] is True
+        listed = await client.get("/api/v1/community/posts")
+        assert any(p["id"] == post_id for p in listed.json()["items"])

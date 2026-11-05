@@ -620,3 +620,37 @@ class TestAvatarAPI:
         assert profile["summary"] == "覆盖 1 个学科方向，共 3 个知识点，欢迎围绕这些方向提问"
         assert profile["mastery_overview"] == {}
         assert profile["reflection_style"] == {}
+
+
+class TestBuildSourcesDedup:
+    """同一个概念在多篇笔记里都有时，来源只列一条。
+
+    实测一次提问返回的来源是 ['塑性','硬度','塑性','硬度','塑性']，
+    看起来像在凑数，灌进上下文也只是把同一段话重复给模型。
+    """
+
+    async def test_same_name_collapses_to_one(self, avatar_service):
+        hits = [
+            {"score": 0.9, "node": {"id": "n1", "name": "塑性", "summary": "A"}},
+            {"score": 0.8, "node": {"id": "n2", "name": "硬度", "summary": "B"}},
+            {"score": 0.7, "node": {"id": "n3", "name": "塑性", "summary": "C"}},
+            {"score": 0.6, "node": {"id": "n4", "name": "硬度", "summary": "D"}},
+            {"score": 0.5, "node": {"id": "n5", "name": "塑性", "summary": "E"}},
+        ]
+
+        sources, context = await avatar_service._build_sources_and_context(hits)
+
+        assert [s["name"] for s in sources] == ["塑性", "硬度"]
+        # 保留分数最高的那条摘要
+        assert sources[0]["summary"] == "A"
+        assert context.count("塑性") == 1
+
+    async def test_distinct_names_are_kept(self, avatar_service):
+        hits = [
+            {"score": 0.9, "node": {"id": "n1", "name": "塑性", "summary": ""}},
+            {"score": 0.8, "node": {"id": "n2", "name": "脆性", "summary": ""}},
+        ]
+
+        sources, _ = await avatar_service._build_sources_and_context(hits)
+
+        assert len(sources) == 2

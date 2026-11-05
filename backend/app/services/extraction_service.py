@@ -49,6 +49,12 @@ async def _embed_nodes(
     return sum(1 for ok in results if ok)
 
 
+# 抽取结果为空时的默认说明（具体分支会给出更精确的原因）
+EMPTY_REASON_DEFAULT = "没有从这份笔记里提炼出知识点，可以补充更具体的内容后重试"
+EMPTY_REASON_NO_TEXT = "文件里没有可识别的文字，可能是扫描版或纯图片文档，请把页面截图按图片上传（支持 OCR）"
+EMPTY_REASON_UNPARSED = "AI 没能从这份内容里提炼出知识点——内容可能过长被截断，或过于零散，建议拆分后再上传"
+
+
 def public_error_message(exc: BaseException | None) -> str:
     """把内部异常翻译成可以展示给学生的文案。
 
@@ -165,6 +171,9 @@ class ExtractionService:
                         status=NOTE_STATUS["EMPTY"],
                         nodes_count=0,
                         edges_count=0,
+                        # 空结果过去只写状态不写原因，用户只看到「内容为空」三个字，
+                        # 分不清是文件没文字、还是 AI 没提炼出来。把原因一起回填。
+                        error_message=result.get("reason") or EMPTY_REASON_DEFAULT,
                         processed_time=datetime.now(timezone.utc),
                     )
                 else:
@@ -246,7 +255,12 @@ class ExtractionService:
             text = parse_file(file_path, fmt)
         if not text or not text.strip():
             logger.warning("文件内容为空，跳过知识抽取 note_id=%s", note_id)
-            return {"nodes": [], "edges": [], "status": NOTE_STATUS["EMPTY"]}
+            return {
+                "nodes": [],
+                "edges": [],
+                "status": NOTE_STATUS["EMPTY"],
+                "reason": EMPTY_REASON_NO_TEXT,
+            }
 
         result = await self.ai_service.extract_knowledge(text)
         if result.get("status") == "failed":
@@ -256,7 +270,12 @@ class ExtractionService:
             logger.warning(
                 "LLM 未返回任何知识点，标记为空可重试 note_id=%s", note_id
             )
-            return {"nodes": [], "edges": [], "status": NOTE_STATUS["EMPTY"]}
+            return {
+                "nodes": [],
+                "edges": [],
+                "status": NOTE_STATUS["EMPTY"],
+                "reason": EMPTY_REASON_UNPARSED,
+            }
 
         book_title = ""
         subject_override: str | None = None
@@ -281,14 +300,13 @@ class ExtractionService:
 
         _backfill_edges(result)
 
-        await self.graph_service.write_extraction_result(
+        written_nodes = await self.graph_service.write_extraction_result(
             user_id=user_id,
             note_id=note_id,
             result=result,
             book_title=book_title,
             subject_override=subject_override,
         )
-
         # 向量化放在抽取链路里而不是发布时：发布回填一次最多补 200 个且串行，
         # 会让"分身答不出后半个图谱"。这里只补本次新节点，失败不影响抽取结果。
         try:
@@ -308,16 +326,21 @@ class ExtractionService:
                 "抽取后向量化失败（不影响抽取结果）note_id=%s error=%s", note_id, exc
             )
 
-        categories = result.get("categories", [])
-
-        def _count_category(c: dict) -> int:
-            return 1 + sum(_count_category(s) for s in c.get("categories", [])) + len(c.get("knowledge_points", []))
-
-        if categories:
-            total_nodes = 1 + sum(_count_category(c) for c in categories)
+        # 计数以「实际入库」为准：同名概念在落库时被合并，若仍按模型原始输出计数，
+        # 知识点数会虚高，宠物成长和书架统计也跟着失真。
+        if isinstance(written_nodes, int) and written_nodes > 0:
+            total_nodes = written_nodes
         else:
-            # legacy 扁平结构：book 根节点 + 每个知识节点（与 graph_service 落库逻辑一致）
-            total_nodes = 1 + len(result.get("nodes", []))
+            categories = result.get("categories", [])
+
+            def _count_category(c: dict) -> int:
+                return 1 + sum(_count_category(s) for s in c.get("categories", [])) + len(c.get("knowledge_points", []))
+
+            if categories:
+                total_nodes = 1 + sum(_count_category(c) for c in categories)
+            else:
+                # legacy 扁平结构：book 根节点 + 每个知识节点（与 graph_service 落库逻辑一致）
+                total_nodes = 1 + len(result.get("nodes", []))
         edge_count = len(result.get("edges", []))
         logger.info(
             "知识抽取完成 note_id=%s total_nodes=%d edges=%d",

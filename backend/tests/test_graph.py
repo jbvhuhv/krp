@@ -571,3 +571,74 @@ class TestGraphAPIGetNodeSource:
         response = await client.get("/api/v1/graph/nodes/nonexistent/source")
 
         assert response.status_code == 404
+
+
+class TestWriteExtractionResultDedupe:
+    """同一笔记内同名概念只落一个节点。
+
+    实测线上数据里「进程」「死锁」这类概念被模型在多个章节重复列出，
+    逐条落库会让知识点数虚高，分身的引用来源还会出现一排同名条目。
+    """
+
+    async def _run(self, graph_service, result, book_title="操作系统"):
+        calls = []
+
+        async def fake_create_node(**kwargs):
+            calls.append(kwargs)
+            return f"node-{len(calls)}"
+
+        graph_service.create_node = fake_create_node
+        graph_service.create_edge = AsyncMock()
+        created = await graph_service.write_extraction_result(
+            user_id="u1", note_id="n1", result=result, book_title=book_title
+        )
+        return calls, created
+
+    async def test_duplicate_categories_and_points_collapse(self, graph_service):
+        result = {
+            "categories": [
+                {"name": "进程与线程", "knowledge_points": [{"name": "进程"}, {"name": "死锁"}]},
+                {"name": "进程与线程", "knowledge_points": [{"name": "进程"}, {"name": "死锁"}]},
+                {"name": "死锁", "knowledge_points": [{"name": "死锁"}]},
+            ],
+            "edges": [{"source": "进程", "target": "死锁", "relation": "related_to"}],
+        }
+
+        calls, created = await self._run(graph_service, result)
+
+        names = [c["name"] for c in calls]
+        # 书根 + 「进程与线程」目录 + 「死锁」目录 + 进程知识点 + 死锁知识点 = 5
+        assert created == 5
+        assert names.count("进程与线程") == 1
+        assert names.count("进程") == 1
+        assert names.count("死锁") == 2  # 1 个目录 + 1 个知识点，同名不同类型不互吞
+
+    async def test_edges_still_connect_deduped_nodes(self, graph_service):
+        result = {
+            "categories": [
+                {"name": "A", "knowledge_points": [{"name": "甲"}]},
+                {"name": "B", "knowledge_points": [{"name": "甲"}, {"name": "乙"}]},
+            ],
+            "edges": [{"source": "甲", "target": "乙", "relation": "related_to"}],
+        }
+
+        calls, _ = await self._run(graph_service, result)
+
+        graph_service.create_edge.assert_awaited_once()
+        kwargs = graph_service.create_edge.await_args.kwargs
+        # 边要连到被合并后保留的那个「甲」，而不是重新建出来的副本
+        assert kwargs["source_id"] == "node-3"
+        # 建节点顺序：书根→目录A→甲→目录B→乙，甲的第二次出现被跳过，所以乙是 node-5
+        assert kwargs["target_id"] == "node-5"
+
+    async def test_flat_nodes_dedupe(self, graph_service):
+        result = {
+            "nodes": [{"name": "梯度下降"}, {"name": "梯度下降"}, {"name": "学习率"}],
+            "edges": [],
+        }
+
+        calls, created = await self._run(graph_service, result, book_title="机器学习")
+
+        names = [c["name"] for c in calls]
+        assert names.count("梯度下降") == 1
+        assert created == 3  # 书根 + 2 个不同知识点

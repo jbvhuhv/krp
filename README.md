@@ -429,7 +429,7 @@ docker run --rm -p 8000:8000 \
 | PUT | `/api/v1/notifications/{notificationId}/read` | 标记通知已读 |
 | GET | `/api/v1/community/posts` | 知识广场公开图谱列表（分页/标签过滤/排序，无需登录） |
 | GET | `/api/v1/community/my-posts` | 当前用户发布的帖子列表 |
-| GET | `/api/v1/community/posts/{postId}` | 图谱详情（浏览量+1，无需登录） |
+| GET | `/api/v1/community/posts/{postId}` | 图谱详情（浏览量+1，无需登录）；已撤回的帖子仅作者本人可读，其他人 404 |
 | POST | `/api/v1/community/posts` | 发布个人图谱到广场（需登录） |
 | POST | `/api/v1/community/posts/{postId}/visibility` | 切换帖子公开/撤回 |
 | DELETE | `/api/v1/community/posts/{postId}` | 删除帖子 |

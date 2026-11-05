@@ -29,6 +29,27 @@
 }
 
 /* ===== Header ===== */
+.withdrawn-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: rgba(234, 179, 8, 0.1);
+  border: 1px solid rgba(234, 179, 8, 0.28);
+  font-size: 13.5px;
+  color: #e3b341;
+}
+
+.withdrawn-icon {
+  font-size: 15px;
+}
+
+.withdrawn-text {
+  flex: 1;
+}
+
 .detail-header {
   background: rgba(22, 27, 34, 0.5);
   border: 1px solid rgba(6, 182, 212, 0.08);

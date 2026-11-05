@@ -241,6 +241,8 @@ async def test_extraction_empty_result_marked_empty(tmp_path):
     )
 
     assert result["status"] == "empty"
+    # 空结果必须带可读原因：界面只有「内容为空」三个字时，用户不知道下一步该做什么
+    assert "AI 没能" in result["reason"]
     graph_service.write_extraction_result.assert_not_called()
     assert ai_service.extract_knowledge.await_count == 1
 
@@ -350,6 +352,7 @@ async def test_extraction_skips_empty_file(tmp_path):
     )
 
     assert result["status"] == "empty"
+    assert "没有可识别的文字" in result["reason"]
     ai_service.extract_knowledge.assert_not_called()
     graph_service.write_extraction_result.assert_not_called()
 
@@ -556,3 +559,30 @@ async def test_extraction_nodes_count_recursive(tmp_path):
 
     # 1 book + 1 C1 + 1 C1.1 + 1 K1 + 1 K2 = 5
     assert result["nodes_count"] == 5
+
+
+async def test_empty_status_persists_readable_reason(tmp_path):
+    """empty 状态要把原因落库——否则前端只能显示「内容为空」，没有下一步线索。"""
+    from sqlalchemy import select
+
+    from app.services.extraction_service import ExtractionService
+
+    engine, session_factory, Note = await _make_note_session()
+    note_file = tmp_path / "blank.md"
+    note_file.write_text("   \n  ")
+
+    service = ExtractionService(
+        ai_service=AsyncMock(),
+        graph_service=AsyncMock(),
+        session_factory=session_factory,
+        backoff_seconds=0,
+    )
+    await service.extract_and_build_graph(
+        note_id="n1", user_id="u1", file_path=str(note_file), fmt="md"
+    )
+
+    async with session_factory() as session:
+        note = (await session.execute(select(Note).where(Note.id == "n1"))).scalar_one()
+        assert note.status == "empty"
+        assert "没有可识别的文字" in (note.error_message or "")
+    await engine.dispose()

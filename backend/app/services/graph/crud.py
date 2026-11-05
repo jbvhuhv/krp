@@ -447,13 +447,21 @@ class CrudMixin:
         result: dict,
         book_title: str = "",
         subject_override: str | None = None,
-    ) -> None:
+    ) -> int:
+        """把一次抽取结果写入图谱，返回实际创建的节点数。
+
+        同一份笔记里，模型经常把同一个概念在多个章节重复列出（实测「进程」
+        被吐了 10 次、「死锁」目录 10 个），逐条落库会让知识点数虚高、
+        分身的引用来源里出现一排同名条目。这里按 (节点类型, 名称) 去重：
+        同名只建一个，边仍然按名字连上，等价于「一个概念一个节点」。
+        """
         # 用户在「上传笔记」时手动选的学科优先级最高：模型判断经常把公共课
         # 笼统归成「计算机」之类，本人最清楚这份笔记属于哪门课。
         subject = (subject_override or "").strip() or (
             (result.get("subject") or "").strip() or None
         )
         seq = count()
+        created = 0
         book_id = await self.create_node(
             user_id=user_id,
             name=book_title or note_id,
@@ -465,10 +473,15 @@ class CrudMixin:
             parent_id=None,
             sort_order=next(seq),
         )
+        created += 1
 
         categories = result.get("categories", [])
         if not categories:
+            seen: dict[tuple[str, str], str] = {}
             for node in result.get("nodes", []):
+                key = (NODE_TYPE_KNOWLEDGE, node["name"])
+                if key in seen:
+                    continue
                 await self.create_node(
                     user_id=user_id,
                     name=node["name"],
@@ -480,12 +493,15 @@ class CrudMixin:
                     parent_id=book_id,
                     sort_order=next(seq),
                 )
-            return
+                seen[key] = node["name"]
+                created += 1
+            return created
 
         name_to_id: dict[str, str] = {}
+        seen: dict[tuple[str, str], str] = {}
         for cat in categories:
-            await self._write_category(
-                user_id, note_id, cat, book_id, name_to_id, subject, seq
+            created += await self._write_category(
+                user_id, note_id, cat, book_id, name_to_id, subject, seq, seen
             )
 
         for edge in result.get("edges", []):
@@ -498,6 +514,7 @@ class CrudMixin:
                     target_id=target_id,
                     relation=edge.get("relation", DEFAULT_RELATION),
                 )
+        return created
 
     async def _write_category(
         self,
@@ -508,33 +525,50 @@ class CrudMixin:
         name_to_id: dict[str, str],
         subject: str | None = None,
         seq: Iterator[int] | None = None,
-    ) -> None:
-        cat_id = await self.create_node(
-            user_id=user_id,
-            name=cat["name"],
-            summary=cat.get("summary", ""),
-            type=NODE_TYPE_CATEGORY,
-            subject=subject,
-            source_note_id=note_id,
-            node_type=NODE_TYPE_CATEGORY,
-            parent_id=parent_id,
-            sort_order=next(seq) if seq is not None else None,
-        )
-        name_to_id[cat["name"]] = cat_id
-        for sub in cat.get("categories", []):
-            await self._write_category(
-                user_id, note_id, sub, cat_id, name_to_id, subject, seq
-            )
-        for kp in cat.get("knowledge_points", []):
-            kp_id = await self.create_node(
+        seen: dict[tuple[str, str], str] | None = None,
+    ) -> int:
+        """写入一个目录及其子树，返回新建的节点数（被去重跳过的不计）。"""
+        seen = seen if seen is not None else {}
+        created = 0
+
+        cat_key = (NODE_TYPE_CATEGORY, cat["name"])
+        cat_id = seen.get(cat_key)
+        if cat_id is None:
+            cat_id = await self.create_node(
                 user_id=user_id,
-                name=kp["name"],
-                summary=kp.get("summary", ""),
-                type=kp.get("type", "concept"),
-                subject=kp.get("subject") or subject,
+                name=cat["name"],
+                summary=cat.get("summary", ""),
+                type=NODE_TYPE_CATEGORY,
+                subject=subject,
                 source_note_id=note_id,
-                node_type=NODE_TYPE_KNOWLEDGE,
-                parent_id=cat_id,
+                node_type=NODE_TYPE_CATEGORY,
+                parent_id=parent_id,
                 sort_order=next(seq) if seq is not None else None,
             )
-            name_to_id[kp["name"]] = kp_id
+            seen[cat_key] = cat_id
+            created += 1
+        name_to_id.setdefault(cat["name"], cat_id)
+
+        for sub in cat.get("categories", []):
+            created += await self._write_category(
+                user_id, note_id, sub, cat_id, name_to_id, subject, seq, seen
+            )
+        for kp in cat.get("knowledge_points", []):
+            kp_key = (NODE_TYPE_KNOWLEDGE, kp["name"])
+            kp_id = seen.get(kp_key)
+            if kp_id is None:
+                kp_id = await self.create_node(
+                    user_id=user_id,
+                    name=kp["name"],
+                    summary=kp.get("summary", ""),
+                    type=kp.get("type", "concept"),
+                    subject=kp.get("subject") or subject,
+                    source_note_id=note_id,
+                    node_type=NODE_TYPE_KNOWLEDGE,
+                    parent_id=cat_id,
+                    sort_order=next(seq) if seq is not None else None,
+                )
+                seen[kp_key] = kp_id
+                created += 1
+            name_to_id.setdefault(kp["name"], kp_id)
+        return created

@@ -297,6 +297,19 @@ class AvatarService:
     async def _build_sources_and_context(
         self, hits: list[dict]
     ) -> tuple[list[dict], str]:
+        # 同一个概念可能存在于多篇笔记（不同课程都讲「塑性」），检索会给回多条；
+        # 直接列进来源像是「凑数」，灌进上下文也只是把同一段话重复给模型。
+        # 这里按名称合并，保留分数最高的那条。
+        deduped: list[dict] = []
+        seen_names: set[str] = set()
+        for hit in hits:
+            name = (hit["node"].get("name") or "").strip()
+            if name and name in seen_names:
+                continue
+            seen_names.add(name)
+            deduped.append(hit)
+        hits = deduped
+
         note_ids = [
             h["node"].get("source_note_id")
             for h in hits
